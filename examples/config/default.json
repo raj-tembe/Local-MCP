@@ -1,0 +1,23 @@
+{
+  "transport": "stdio",
+  "port": 3000,
+  "security": {
+    "defaultMode": "ask",
+    "allowedCommands": ["ls", "cat", "git", "npm", "node", "echo"],
+    "deniedCommands": ["rm", "sudo", "dd", "mkfs"],
+    "allowedPaths": ["~", "/tmp"],
+    "deniedPaths": ["/etc", "~/.ssh"],
+    "requireApproval": ["fs.write", "shell.execute", "terminal.create"],
+    "maxCommandLength": 4096,
+    "sessionTimeoutMs": 300000,
+    "rateLimitPerMinute": 60
+  },
+  "logging": {
+    "level": "info",
+    "auditFile": "~/.local-mcp/audit.jsonl"
+  },
+  "cloud": {
+    "relayUrl": "",
+    "token": ""
+  }
+}

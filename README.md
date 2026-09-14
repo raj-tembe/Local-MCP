@@ -1,203 +1,47 @@
-Local-MCP
+# Local-MCP
 
-«Connect cloud-based AI to your local machine through MCP.»
+Local-MCP is a secure local bridge for cloud AI clients using the Model Context Protocol (MCP). It enables an MCP-compatible client to talk to the user's local terminal, filesystem, and user-level I/O with configurable safety controls.
 
-Local-MCP is a terminal package that creates a secure bridge between a cloud-based AI and a user's local machine.
+## Features
 
-It allows an AI agent to interact with the local environment through terminal access and user-level I/O, using the Model Context Protocol (MCP).
+- MCP server with stdio, SSE/HTTP, and tunnel-ready infrastructure
+- Terminal execution via node-pty concepts and shell commands
+- User approval prompts before sensitive actions
+- Audit logging and config-based enforcement
+- Cross-platform Node.js CLI
 
-Instead of running the AI locally, Local-MCP gives the cloud AI controlled access to the machine where the user is actually working.
+## Quick start
 
----
-
-Overview
-
-                    Cloud
-┌─────────────────────────────────┐
-│                                 │
-│          AI / AI Agent          │
-│                                 │
-└────────────────┬────────────────┘
-                 │
-                 │ MCP
-                 ▼
-┌─────────────────────────────────┐
-│            Local-MCP            │
-│                                 │
-│       Local MCP Bridge          │
-│                                 │
-│   ┌─────────┐    ┌──────────┐  │
-│   │Terminal │    │ User I/O │  │
-│   └────┬────┘    └────┬─────┘  │
-│        │              │        │
-└────────┼──────────────┼────────┘
-         │              │
-         ▼              ▼
-┌─────────────────────────────────┐
-│         Local Machine           │
-│                                 │
-│     Shell / Files / Processes   │
-│     stdin / stdout / stderr     │
-└─────────────────────────────────┘
-
-Local-MCP runs locally and acts as the execution layer for an AI agent.
-
-The AI provides the reasoning.
-
-Local-MCP provides the connection to the machine.
-
----
-
-Why Local-MCP?
-
-Cloud-based AI agents are powerful at:
-
-- Understanding code
-- Planning tasks
-- Reasoning about problems
-- Generating code
-- Analyzing output
-
-But a cloud AI normally cannot directly interact with the user's computer.
-
-For example, an AI may know how to fix a project but cannot:
-
-cd project
+```bash
 npm install
-npm test
-git status
+npm run build
+node dist/cli.js init
+node dist/cli.js start --transport stdio
+```
 
-on the user's actual machine.
+## CLI commands
 
-Local-MCP solves this by providing an MCP interface to the local environment.
+```bash
+local-mcp init
+local-mcp start --transport stdio
+local-mcp start --transport sse --port 3000
+local-mcp config list
+local-mcp doctor
+```
 
-AI reasoning
-     │
-     ▼
-MCP tool call
-     │
-     ▼
-Local-MCP
-     │
-     ▼
-Local machine
-     │
-     ▼
-Command / I/O result
-     │
-     ▼
-AI
+## Security defaults
 
----
+The default policy is intentionally safe:
 
-Features
+- `defaultMode` is `ask`
+- restricted command allowlist plus explicitly denied commands
+- writes and shell operations require approval by default
+- audit logs are written to `~/.local-mcp/audit.jsonl`
 
-🖥️ Terminal Access
+## Project status
 
-Execute commands on the local machine through MCP.
+This repository contains the initial scaffold and a working core config/security foundation for the Local-MCP package. The next stage is to expand the tool registry, transport support, and documentation for the full production feature set.
 
-Example:
-
-AI
- │
- │ terminal.exec("npm test")
- ▼
-Local-MCP
- │
- ▼
-Local Shell
- │
- ▼
-Test Output
- │
- ▼
-AI
-
-The AI can receive:
-
-- "stdout"
-- "stderr"
-- Exit code
-- Execution status
-
----
-
-👤 User-Level Access
-
-Local-MCP operates using the permissions of the user running it.
-
-It does not require root/administrator privileges by default.
-
-User
- │
- └── local-mcp
-       │
-       ├── Terminal
-       ├── Files
-       ├── Processes
-       └── User I/O
-
-This allows Local-MCP to work with the user's existing environment while avoiding unnecessary system-level privileges.
-
----
-
-🔌 MCP Integration
-
-Local-MCP exposes local capabilities as MCP tools.
-
-An MCP-compatible AI client can discover and invoke those tools.
-
-Example:
-
-{
-  "name": "terminal.exec",
-  "arguments": {
-    "command": "git status"
-  }
-}
-
-Local-MCP executes the request locally and returns the result.
-
----
-
-⌨️ User I/O
-
-Local-MCP can provide user-level interaction between the AI and the local terminal.
-
-For example:
-
-AI
- │
- │ "I need your confirmation"
- ▼
-Local-MCP
- │
- ▼
-User
- │
- │ Yes
- ▼
-Local-MCP
- │
- ▼
-AI
-
-This enables interactive workflows where the AI can request information or confirmation from the user.
-
----
-
-🔐 Permission Control
-
-Local-MCP is designed around controlled access.
-
-Operations can require explicit user approval.
-
-Example:
-
-┌─────────────────────────────────────┐
-│ AI wants to execute:                │
-│                                     │
-│ rm -rf ./build                      │
 │                                     │
 │ Allow this operation?               │
 │                                     │
