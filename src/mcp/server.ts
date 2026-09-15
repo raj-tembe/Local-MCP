@@ -14,6 +14,7 @@ import { type AppConfig, defaultConfig } from '../config/config.js';
 import { SecurityEngine, createSessionId } from '../security/security.js';
 import { AuditLogger } from '../audit/audit.js';
 import { TerminalManager } from '../terminal/manager.js';
+import ConnectorsStore from '../connectors/store.js';
 
 const execAsync = promisify(exec);
 
@@ -68,6 +69,7 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
   const security = new SecurityEngine(config);
   const audit = new AuditLogger(config.logging.auditFile);
   const terminalManager = new TerminalManager();
+  const connectors = new ConnectorsStore();
 
   const server = new McpServer({
     name: 'local-mcp',
@@ -312,6 +314,41 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
 
     return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }], structuredContent: { results } };
   });
+
+    // Connectors management for custom MCP connectors (Claude integration)
+    server.registerTool('connectors.list', {
+      description: 'List configured custom connectors (for Claude integrations).',
+      inputSchema: {}
+    }, async () => {
+      const list = await connectors.list();
+      return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }], structuredContent: { connectors: list } };
+    });
+
+    server.registerTool('connectors.add', {
+      description: 'Add a custom connector (name + HTTPS URL).',
+      inputSchema: { name: z.string(), url: z.string().describe('HTTPS endpoint for MCP e.g. https://mcp.example.com/mcp'), description: z.string().optional() }
+    }, async ({ name, url, description }) => {
+      const decision = await security.authorize('connectors.add', { name, url });
+      if (!decision.allowed) {
+        return denyResult(decision.reason ?? 'Permission denied', { tool: 'connectors.add', name, url });
+      }
+      const added = await connectors.add(name, url, description);
+      audit.log({ timestamp: new Date().toISOString(), tool: 'connectors.add', decision: 'allow', result: JSON.stringify(added) });
+      return { content: [{ type: 'text', text: JSON.stringify(added, null, 2) }], structuredContent: { connector: added } };
+    });
+
+    server.registerTool('connectors.remove', {
+      description: 'Remove a configured connector by name.',
+      inputSchema: { name: z.string() }
+    }, async ({ name }) => {
+      const decision = await security.authorize('connectors.remove', { name });
+      if (!decision.allowed) {
+        return denyResult(decision.reason ?? 'Permission denied', { tool: 'connectors.remove', name });
+      }
+      const ok = await connectors.remove(name);
+      audit.log({ timestamp: new Date().toISOString(), tool: 'connectors.remove', decision: 'allow', result: JSON.stringify({ name, removed: ok }) });
+      return { content: [{ type: 'text', text: JSON.stringify({ name, removed: ok }, null, 2) }], structuredContent: { name, removed: ok } };
+    });
 
   server.registerTool('user.notify', {
     description: 'Send a desktop notification to the local user.',

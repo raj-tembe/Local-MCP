@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import ApprovalStore from './store.js';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { type AppConfig } from '../config/config.js';
@@ -16,8 +17,11 @@ export type AuthorizationDecision = {
 
 export class SecurityEngine {
   private readonly approvalCache = new Map<string, 'allow' | 'deny'>();
+  private readonly store: ApprovalStore;
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly config: AppConfig) {
+    this.store = new ApprovalStore();
+  }
 
   static normalizeCommand(command: string): string {
     return command.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
@@ -67,7 +71,10 @@ export class SecurityEngine {
   }
 
   private rememberDecision(toolName: string, details: Record<string, unknown>, decision: 'allow' | 'deny'): void {
-    this.approvalCache.set(this.getDecisionKey(toolName, details), decision);
+    const key = this.getDecisionKey(toolName, details);
+    this.approvalCache.set(key, decision);
+    // persist asynchronously, best-effort
+    void this.store.set(key, decision).catch(() => { /* ignore persistence errors */ });
   }
 
   shouldRequireApproval(toolName: string): boolean {
@@ -149,9 +156,7 @@ export class SecurityEngine {
 
   async authorize(toolName: string, details: Record<string, unknown>): Promise<AuthorizationDecision> {
     const cached = this.getCachedDecision(toolName, details);
-    if (cached) {
-      return cached;
-    }
+    if (cached) return cached;
 
     const command = typeof details.command === 'string' ? details.command : undefined;
     const targetPath = typeof details.path === 'string' ? details.path : typeof details.filePath === 'string' ? details.filePath : undefined;
@@ -176,6 +181,18 @@ export class SecurityEngine {
       if (!cwdCheck.allowed) {
         return { allowed: false, mode: 'deny', decision: 'deny', reason: cwdCheck.reason };
       }
+    }
+
+    // check persistent approvals (user-granted decisions stored on disk)
+    try {
+      const key = this.getDecisionKey(toolName, details);
+      const stored = await this.store.get(key);
+      if (stored) {
+        const d = stored.decision;
+        return { allowed: d === 'allow', mode: d === 'allow' ? 'allow' : 'deny', decision: d, reason: 'Persistent approval' };
+      }
+    } catch {
+      // ignore store errors and continue to interactive prompt if needed
     }
 
     if (this.shouldRequireApproval(toolName)) {

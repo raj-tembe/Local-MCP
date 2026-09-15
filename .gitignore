@@ -5,3 +5,9 @@ coverage/
 .audit/
 *.log
 .DS_Store
+*.log
+examples/**/node_modules/
+**/.ngrok2/
+**/.env
+ngrok.zip
+examples/expose-ngrok/ngrok
