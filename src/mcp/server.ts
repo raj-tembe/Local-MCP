@@ -509,7 +509,7 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
 }
 
 export async function createSseHttpServer(config: AppConfig = defaultConfig): Promise<{ app: ReturnType<typeof createMcpExpressApp>; server: any }> {
-  const app = createMcpExpressApp();
+  const app = createMcpExpressApp({ host: '0.0.0.0' });
   app.use(express.json({ limit: '4mb' }));
   const transports: Record<string, any> = {};
 
