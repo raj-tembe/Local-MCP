@@ -509,7 +509,7 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
 }
 
 export async function createSseHttpServer(config: AppConfig = defaultConfig): Promise<{ app: ReturnType<typeof createMcpExpressApp>; server: any }> {
-  const app = createMcpExpressApp({ host: '0.0.0.0' });
+  const app = express();
   app.use(express.json({ limit: '4mb' }));
   const transports: Record<string, any> = {};
 
@@ -518,12 +518,63 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
   });
 
   app.get('/mcp', async (req: any, res: any) => {
-    const transport = new SSEServerTransport('/messages', res);
+    // Claude Connector validation probe / OAuth discovery check:
+    // If Claude or any client sends a GET request checking metadata/auth or requesting JSON format,
+    // or if Accept header doesn't strictly want text/event-stream, return appropriate server capability metadata
+    // explicitly specifying authentication is not required.
+    const accept = req.headers['accept'] || '';
+    if (!accept.includes('text/event-stream')) {
+      res.json({
+        name: 'local-mcp',
+        version: '0.1.0',
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        authentication: { required: false }
+      });
+      return;
+    }
+
+    const transport = new SSEServerTransport('/mcp', res);
     const sessionId = transport.sessionId;
     transports[sessionId] = transport;
     transport.onclose = () => delete transports[sessionId];
     const server = createLocalMcpServer(config);
     await server.connect(transport);
+  });
+
+  app.post('/mcp', async (req: any, res: any) => {
+    const sessionId = (req.query.sessionId as string | undefined) ?? (req.body && req.body.sessionId ? String(req.body.sessionId) : undefined);
+    const transport = sessionId ? transports[sessionId] : undefined;
+    if (!transport) {
+      // If Claude sends an initial POST handshake without an SSE session, 
+      // return a valid JSON-RPC initialize response with `sessionId` parameter in the endpoint URL
+      // so Claude attaches it to subsequent messages.
+      res.setHeader('Content-Type', 'application/json');
+      const newSessionId = createSessionId();
+      
+      const sseTransport = new SSEServerTransport(`/mcp?sessionId=${newSessionId}`, res);
+      transports[newSessionId] = sseTransport;
+      sseTransport.onclose = () => delete transports[newSessionId];
+      const server = createLocalMcpServer(config);
+      await server.connect(sseTransport);
+
+      if (req.body && req.body.method === 'initialize') {
+        res.json({
+          jsonrpc: '2.0',
+          id: req.body.id,
+          result: {
+            protocolVersion: '2024-11-05',
+            capabilities: { tools: {} },
+            serverInfo: { name: 'local-mcp', version: '0.1.0' }
+          }
+        });
+        return;
+      }
+      
+      await sseTransport.handlePostMessage(req, res, req.body);
+      return;
+    }
+    await transport.handlePostMessage(req, res, req.body);
   });
 
   app.post('/messages', async (req: any, res: any) => {
