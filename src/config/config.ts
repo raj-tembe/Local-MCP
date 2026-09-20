@@ -20,6 +20,23 @@ export const loggingConfigSchema = z.object({
   auditFile: z.string().default('~/.local-mcp/audit.jsonl')
 });
 
+export const authConfigSchema = z.object({
+  apiKeys: z.array(z.string()).default([]),
+  requireAuth: z.boolean().default(false),
+  oauth: z.object({
+    enabled: z.boolean().default(false),
+    clientId: z.string().default(''),
+    clientSecret: z.string().default(''),
+    issuerUrl: z.string().default(''),
+    audience: z.string().default('')
+  }).default({ enabled: false, clientId: '', clientSecret: '', issuerUrl: '', audience: '' })
+});
+
+export const toolFilterConfigSchema = z.object({
+  allowedTools: z.array(z.string()).default([]),
+  deniedTools: z.array(z.string()).default(['shell.execute', 'terminal.write', 'fs.write', 'fs.mkdir', 'user.clipboard.write'])
+});
+
 export const cloudConfigSchema = z.object({
   relayUrl: z.string().default(''),
   token: z.string().default('')
@@ -30,12 +47,16 @@ export const appConfigSchema = z.object({
   port: z.number().default(3000),
   security: securityConfigSchema.default({}),
   logging: loggingConfigSchema.default({}),
-  cloud: cloudConfigSchema.default({})
+  cloud: cloudConfigSchema.default({}),
+  auth: authConfigSchema.default({}),
+  toolFilter: toolFilterConfigSchema.default({})
 });
 
 export type SecurityConfig = z.infer<typeof securityConfigSchema>;
 export type LoggingConfig = z.infer<typeof loggingConfigSchema>;
 export type CloudConfig = z.infer<typeof cloudConfigSchema>;
+export type AuthConfig = z.infer<typeof authConfigSchema>;
+export type ToolFilterConfig = z.infer<typeof toolFilterConfigSchema>;
 export type AppConfig = z.infer<typeof appConfigSchema>;
 
 export const defaultConfig: AppConfig = {
@@ -59,6 +80,21 @@ export const defaultConfig: AppConfig = {
   cloud: {
     relayUrl: '',
     token: ''
+  },
+  auth: {
+    apiKeys: [],
+    requireAuth: false,
+    oauth: {
+      enabled: false,
+      clientId: '',
+      clientSecret: '',
+      issuerUrl: '',
+      audience: ''
+    }
+  },
+  toolFilter: {
+    allowedTools: [],
+    deniedTools: ['shell.execute', 'terminal.write', 'fs.write', 'fs.mkdir', 'user.clipboard.write']
   }
 };
 
@@ -98,6 +134,18 @@ export function mergeConfig(base: AppConfig, incoming: Partial<AppConfig> = {}):
     cloud: {
       ...base.cloud,
       ...(incoming.cloud ?? {})
+    },
+    auth: {
+      ...base.auth,
+      ...(incoming.auth ?? {}),
+      oauth: {
+        ...base.auth.oauth,
+        ...(incoming.auth?.oauth ?? {})
+      }
+    },
+    toolFilter: {
+      ...base.toolFilter,
+      ...(incoming.toolFilter ?? {})
     }
   };
 }
@@ -141,6 +189,39 @@ export function envOverrides(): Partial<AppConfig> {
       ...(config.cloud ?? defaultConfig.cloud),
       relayUrl: relayUrl ?? '',
       token: token ?? ''
+    };
+  }
+
+  const apiKeys = process.env.LOCAL_MCP_API_KEYS;
+  if (apiKeys) {
+    config.auth = {
+      ...(config.auth ?? defaultConfig.auth),
+      apiKeys: apiKeys.split(',').map(k => k.trim()).filter(k => k),
+      requireAuth: true
+    };
+  }
+
+  const requireAuth = process.env.LOCAL_MCP_REQUIRE_AUTH;
+  if (requireAuth && ['true', 'false'].includes(requireAuth.toLowerCase())) {
+    config.auth = {
+      ...(config.auth ?? defaultConfig.auth),
+      requireAuth: requireAuth.toLowerCase() === 'true'
+    };
+  }
+
+  const allowedTools = process.env.LOCAL_MCP_ALLOWED_TOOLS;
+  if (allowedTools) {
+    config.toolFilter = {
+      ...(config.toolFilter ?? defaultConfig.toolFilter),
+      allowedTools: allowedTools.split(',').map(t => t.trim()).filter(t => t)
+    };
+  }
+
+  const deniedTools = process.env.LOCAL_MCP_DENIED_TOOLS;
+  if (deniedTools) {
+    config.toolFilter = {
+      ...(config.toolFilter ?? defaultConfig.toolFilter),
+      deniedTools: deniedTools.split(',').map(t => t.trim()).filter(t => t)
     };
   }
 

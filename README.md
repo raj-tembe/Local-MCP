@@ -1,114 +1,147 @@
-## Add custom connector
+## Connecting Local-MCP to Claude
 
-Add custom connectors (Claude)
+### Overview
+Local-MCP exposes an MCP-compatible SSE endpoint at `/mcp` that can be connected to Claude via **Custom Connectors** (UI) or **MCP Connector API** (programmatic).
 
-Connect Claude to your data and tools by registering an MCP endpoint. Learn more about connectors: https://support.anthropic.com/en/articles/11175166-about-custom-integrations-using-remote-mcp
+### Quick Start: Connect to Claude UI
 
-Steps:
+```bash
+# 1. Build and start Local-MCP with SSE transport
+npm run build
+node dist/cli.js start --transport sse --port 3000
 
-- Provide a name and the HTTPS URL where your MCP server accepts requests (for example https://mcp.example.com/mcp).
-- The connector will appear in the connectors list and can be removed later.
+# 2. Expose publicly via tunnel (new terminal)
+npx localtunnel --port 3000
+# → https://abc123.loca.lt
 
-You can manage connectors locally with the CLI:
+# 3. In Claude: Customize → Connectors → Add custom connector
+#    Enter: https://abc123.loca.lt/mcp
+#    Authentication: "No sign-in" + add API key in Request Headers (optional)
+```
+
+### Authentication
+
+#### Option 1: API Key (Recommended for tunnels)
+```bash
+# Set API key via environment
+export LOCAL_MCP_API_KEYS="your-secret-key-1,your-secret-key-2"
+export LOCAL_MCP_REQUIRE_AUTH=true
+node dist/cli.js start --transport sse --port 3000
+```
+
+In Claude's "Add custom connector" dialog:
+- **Authentication**: Select "No sign-in"
+- **Request headers**: Add `Authorization` = `Bearer your-secret-key-1`
+
+#### Option 2: No Authentication (Development Only)
+```bash
+# Default: no auth required
+node dist/cli.js start --transport sse --port 3000
+```
+
+In Claude: Select "No sign-in" with no headers.
+
+#### Option 3: Config File
+Create `~/.local-mcp/config.json`:
+```json
+{
+  "transport": "sse",
+  "port": 3000,
+  "auth": {
+    "requireAuth": true,
+    "apiKeys": ["your-secret-key-1", "your-secret-key-2"]
+  }
+}
+```
+
+### Tunnel Options
+
+| Tool | Command | Notes |
+|------|---------|-------|
+| **localtunnel** | `npx localtunnel --port 3000` | Free, random subdomain |
+| **ngrok** | `ngrok http 3000` | Free tier, fixed domain on paid |
+| **Cloudflare Tunnel** | `cloudflared tunnel --url http://localhost:3000` | Free, custom domains |
+| **VS Code Port Forward** | Built-in | Only works in Codespaces |
+
+### Tool Filtering (Allowlist/Denylist)
+
+Restrict which tools Claude can access:
+
+```bash
+# Allow only read-only tools
+export LOCAL_MCP_ALLOWED_TOOLS="fs.read,fs.list,fs.stat,system.info,terminal.read,terminal.list"
+node dist/cli.js start --transport sse --port 3000
+```
+
+Or in config:
+```json
+{
+  "toolFilter": {
+    "allowedTools": ["fs.read", "fs.list", "fs.stat", "system.info"],
+    "deniedTools": ["shell.execute", "fs.write", "fs.mkdir", "terminal.write"]
+  }
+}
+```
+
+**Default denied tools**: `shell.execute`, `terminal.write`, `fs.write`, `fs.mkdir`, `user.clipboard.write`
+
+### Programmatic Access (Claude API)
+
+Use the Messages API with `mcp_servers` and `mcp_toolset`:
+
+```bash
+curl https://api.anthropic.com/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "anthropic-beta: mcp-client-2025-11-20" \
+  -d '{
+    "model": "claude-opus-5",
+    "max_tokens": 1000,
+    "messages": [{"role": "user", "content": "List files in my home directory"}],
+    "mcp_servers": [{
+      "type": "url",
+      "url": "https://abc123.loca.lt/mcp",
+      "name": "local-mcp",
+      "authorization_token": "your-secret-key-1"
+    }],
+    "tools": [{
+      "type": "mcp_toolset",
+      "mcp_server_name": "local-mcp",
+      "configs": {
+        "shell.execute": {"enabled": false},
+        "fs.write": {"enabled": false}
+      }
+    }]
+  }'
+```
+
+### Managing Connectors Locally
 
 ```bash
 # List configured connectors
 local-mcp connectors list
 
-# Add a connector
-local-mcp connectors:add example https://mcp.example.com/mcp "Example connector"
+# Add a connector (stored in ~/.local-mcp/connectors.json)
+local-mcp connectors:add my-server https://my-mcp.example.com/mcp "My MCP Server"
 
 # Remove a connector
-local-mcp connectors:remove example
+local-mcp connectors:remove my-server
 ```
 
-When using Claude's "Add custom connector" flow, enter the HTTPS address of the MCP endpoint (the URL above). The MCP server will accept requests at that URL and route them to the registered tools. Ensure the server is reachable from Claude (public HTTPS) and that any required authentication is handled by the connector.
+### Security Best Practices
 
-Example: register the live localtunnel connector
+1. **Always use authentication** when exposing via public tunnels
+2. **Use tool filtering** to deny destructive tools (`shell.execute`, `fs.write`)
+3. **Monitor audit logs** at `~/.local-mcp/audit.jsonl`
+4. **Use approval mode** (default) for interactive confirmation
+5. **Remove test connectors** when done
 
-This repo includes a running `localtunnel` example that created a public URL during the session. To register that connector in the local store:
+---
 
-```bash
-# register connector locally (uses ConnectorsStore)
-npm run dev -- connectors:add localtunnel https://curly-dancers-hide.loca.lt/mcp "localtunnel example"
-```
+## Add custom connector (Legacy)
 
-After running the command the connector will be stored in `~/.local-mcp/connectors.json` and available via the MCP tool `connectors.list`.
-
-Programmatic (MCP) example
-
-You can also programmatically call `connectors.add` over an MCP relay (WebSocket). Example:
-
-1. Start the example relay server (see `examples/relay/index.js`):
-
-```bash
-node examples/relay/index.js # defaults to port 8080
-```
-
-2. Run the example client to add a connector:
-
-```bash
-node examples/connector-client/add-connector.js my-connector https://curly-dancers-hide.loca.lt/mcp "My programmatic connector"
-```
-
-The client connects to the relay at `ws://localhost:8080/?token=demo-token` by default. To point it to a public relay, set `RELAY_URL`.
-
-SSE / HTTP example (public `/mcp` endpoint)
-
-If you expose the MCP server via a public URL (for example using localtunnel), you can open an SSE connection to `/mcp` and the server will return the POST endpoint to send messages to (it includes a temporary `sessionId`). The repository includes a small helper that demonstrates this flow and prints a sample `curl` POST you can use to call `connectors.add`.
-
-```bash
-# connect and print the POST endpoint (default base: https://curly-dancers-hide.loca.lt)
-node examples/connector-client/add-connector-sse.js https://curly-dancers-hide.loca.lt
-```
-
-The script will print a `POST` URL such as `https://<host>/messages?sessionId=...` and a placeholder `curl` command. Use the SDK client or craft a valid MCP request envelope when posting to that URL.
-
-Examples summary
-
-- WebSocket relay (programmatic): start the relay and use the SDK WebSocket client to call `connectors.add`.
-
-```bash
-# start relay (defaults to 8080)
-node examples/relay/index.js
-
-# add connector via SDK client
-RELAY_URL=ws://localhost:8080/?token=demo-token node examples/connector-client/add-connector.js my-connector https://my-host/mcp "desc"
-```
-
-- SSE / HTTP (public `/mcp`): open an SSE connection to `/mcp` on your public host; the server returns the `POST` endpoint to send MCP request envelopes to (includes `sessionId`). The `examples/connector-client/add-connector-sse.js` script demonstrates this flow.
-
-```bash
-# get POST endpoint and example curl
-node examples/connector-client/add-connector-sse.js https://your-public-host
-
-# then POST an MCP envelope to the returned /messages?sessionId=... URL
-curl -X POST <returned_url> -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"connectors.add","params":{"arguments":{"name":"c","url":"https://...","description":"..."}}}'
-```
-
-- CLI (local store): use the built-in CLI to persist connectors locally in `~/.local-mcp/connectors.json`.
-
-```bash
-npm run dev -- connectors:add localtunnel https://curly-dancers-hide.loca.lt/mcp "localtunnel example"
-```
-
-Registering from Claude's UI
-
-If you've exposed your MCP endpoint via a public tunnel (for example using `localtunnel`) you can register it directly from Claude's "Add custom connector" UI:
-
-1. Start a public tunnel pointing to your MCP server (example uses `localtunnel`):
-
-```bash
-# expose local MCP port 8080 to the internet
-npx localtunnel --port 8080
-# note the public URL printed by localtunnel (e.g. https://curly-dancers-hide.loca.lt)
-```
-
-2. In Claude, open Connectors → Add custom connector. Enter the HTTPS URL of your MCP endpoint, e.g. `https://curly-dancers-hide.loca.lt/mcp`, and give it a name/description.
-
-3. (Optional) Verify by using the example HTTP POST flow or the WebSocket relay to call `connectors.add` programmatically — the connector should appear in your local store (`~/.local-mcp/connectors.json`) and in the `connectors.list` tool.
-
-Security note: only register endpoints you trust. Prefer authenticated tunnels and remove test connectors when finished.
+Add custom connectors (Claude)
 # Local-MCP
 
 Local-MCP is a secure local bridge for cloud AI clients using the Model Context Protocol (MCP). It enables an MCP-compatible client to talk to the user's local terminal, filesystem, and user-level I/O with configurable safety controls.

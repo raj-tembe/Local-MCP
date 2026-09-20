@@ -81,6 +81,23 @@ export class SecurityEngine {
     return this.config.security.requireApproval.includes(toolName);
   }
 
+  checkToolAllowed(toolName: string): { allowed: boolean; reason?: string } {
+    const { allowedTools, deniedTools } = this.config.toolFilter;
+
+    if (allowedTools.length > 0) {
+      if (!allowedTools.includes(toolName)) {
+        return { allowed: false, reason: `Tool '${toolName}' is not in the allowed tools list.` };
+      }
+      return { allowed: true };
+    }
+
+    if (deniedTools.includes(toolName)) {
+      return { allowed: false, reason: `Tool '${toolName}' is denied by tool filter policy.` };
+    }
+
+    return { allowed: true };
+  }
+
   checkCommand(command: string): { allowed: boolean; reason?: string } {
     const cmd = SecurityEngine.normalizeCommand(command);
 
@@ -157,6 +174,11 @@ export class SecurityEngine {
   async authorize(toolName: string, details: Record<string, unknown>): Promise<AuthorizationDecision> {
     const cached = this.getCachedDecision(toolName, details);
     if (cached) return cached;
+
+    const toolCheck = this.checkToolAllowed(toolName);
+    if (!toolCheck.allowed) {
+      return { allowed: false, mode: 'deny', decision: 'deny', reason: toolCheck.reason };
+    }
 
     const command = typeof details.command === 'string' ? details.command : undefined;
     const targetPath = typeof details.path === 'string' ? details.path : typeof details.filePath === 'string' ? details.filePath : undefined;

@@ -15,8 +15,34 @@ import { SecurityEngine, createSessionId } from '../security/security.js';
 import { AuditLogger } from '../audit/audit.js';
 import { TerminalManager } from '../terminal/manager.js';
 import ConnectorsStore from '../connectors/store.js';
+import { randomUUID } from 'node:crypto';
 
 const execAsync = promisify(exec);
+
+function verifyApiKey(config: AppConfig, req: any): boolean {
+  if (!config.auth.requireAuth) return true;
+  if (config.auth.apiKeys.length === 0) return true;
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return false;
+
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+  return config.auth.apiKeys.includes(token);
+}
+
+function authMiddleware(config: AppConfig) {
+  return (req: any, res: any, next: any) => {
+    if (!verifyApiKey(config, req)) {
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32600, message: 'Unauthorized: Invalid or missing API key' },
+        id: req.body?.id ?? null
+      });
+      return;
+    }
+    next();
+  };
+}
 
 const textContent = (text: string) => ({ type: 'text' as const, text });
 
@@ -513,15 +539,16 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
   app.use(express.json({ limit: '4mb' }));
   const transports: Record<string, any> = {};
 
+  const requireAuth = authMiddleware(config);
+
   app.get('/health', (_req: any, res: any) => {
     res.json({ ok: true, transport: 'sse', port: config.port });
   });
 
-  app.get('/mcp', async (req: any, res: any) => {
+  app.get('/mcp', requireAuth, async (req: any, res: any) => {
     // Claude Connector validation probe / OAuth discovery check:
     // If Claude or any client sends a GET request checking metadata/auth or requesting JSON format,
     // or if Accept header doesn't strictly want text/event-stream, return appropriate server capability metadata
-    // explicitly specifying authentication is not required.
     const accept = req.headers['accept'] || '';
     if (!accept.includes('text/event-stream')) {
       res.json({
@@ -529,7 +556,7 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
         version: '0.1.0',
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        authentication: { required: false }
+        authentication: { required: config.auth.requireAuth }
       });
       return;
     }
@@ -542,7 +569,7 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
     await server.connect(transport);
   });
 
-  app.post('/mcp', async (req: any, res: any) => {
+  app.post('/mcp', requireAuth, async (req: any, res: any) => {
     const sessionId = (req.query.sessionId as string | undefined) ?? (req.body && req.body.sessionId ? String(req.body.sessionId) : undefined);
     const transport = sessionId ? transports[sessionId] : undefined;
     if (!transport) {
@@ -577,7 +604,7 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
     await transport.handlePostMessage(req, res, req.body);
   });
 
-  app.post('/messages', async (req: any, res: any) => {
+  app.post('/messages', requireAuth, async (req: any, res: any) => {
     const sessionId = (req.query.sessionId as string | undefined) ?? (req.body && req.body.sessionId ? String(req.body.sessionId) : undefined);
     const transport = sessionId ? transports[sessionId] : undefined;
     if (!transport) {
