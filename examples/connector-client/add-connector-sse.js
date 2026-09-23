@@ -35,15 +35,18 @@ async function getEndpoint() {
     const postUrl = `${base.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     console.log('\nPosting MCP request to:', postUrl);
 
-    // build a simple MCP request envelope
+    // build a proper JSON-RPC 2.0 request envelope for tools/call
     const envelope = {
-      type: 'request',
+      jsonrpc: '2.0',
       id: String(Math.floor(Math.random() * 1e9)),
-      name: 'connectors.add',
-      arguments: {
-        name: process.env.CONNECTOR_NAME || 'sse-added',
-        url: `${base.replace(/\/$/, '')}/mcp`,
-        description: process.env.CONNECTOR_DESC || 'Added via SSE example'
+      method: 'tools/call',
+      params: {
+        name: 'connectors.add',
+        arguments: {
+          name: process.env.CONNECTOR_NAME || 'sse-added',
+          url: `${base.replace(/\/$/, '')}/mcp`,
+          description: process.env.CONNECTOR_DESC || 'Added via SSE example'
+        }
       }
     };
 

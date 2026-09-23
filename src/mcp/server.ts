@@ -6,8 +6,8 @@ import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js
 import express from 'express';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs/promises';
 import { statSync, readFileSync } from 'node:fs';
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { type AppConfig, defaultConfig } from '../config/config.js';
@@ -561,7 +561,8 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
       return;
     }
 
-    const transport = new SSEServerTransport('/mcp', res);
+    // Use /messages as the POST endpoint path so the endpoint event returns /messages?sessionId=...
+    const transport = new SSEServerTransport('/messages', res);
     const sessionId = transport.sessionId;
     transports[sessionId] = transport;
     transport.onclose = () => delete transports[sessionId];
@@ -571,21 +572,11 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
 
   app.post('/mcp', requireAuth, async (req: any, res: any) => {
     const sessionId = (req.query.sessionId as string | undefined) ?? (req.body && req.body.sessionId ? String(req.body.sessionId) : undefined);
-    const transport = sessionId ? transports[sessionId] : undefined;
-    if (!transport) {
-      // If Claude sends an initial POST handshake without an SSE session, 
-      // return a valid JSON-RPC initialize response with `sessionId` parameter in the endpoint URL
-      // so Claude attaches it to subsequent messages.
-      res.setHeader('Content-Type', 'application/json');
-      const newSessionId = createSessionId();
-      
-      const sseTransport = new SSEServerTransport(`/mcp?sessionId=${newSessionId}`, res);
-      transports[newSessionId] = sseTransport;
-      sseTransport.onclose = () => delete transports[newSessionId];
-      const server = createLocalMcpServer(config);
-      await server.connect(sseTransport);
+    const isInitialize = req.body && req.body.method === 'initialize';
 
-      if (req.body && req.body.method === 'initialize') {
+    if (!sessionId) {
+      if (isInitialize) {
+        // Return initialize response directly - client should then GET /mcp to establish SSE
         res.json({
           jsonrpc: '2.0',
           id: req.body.id,
@@ -597,8 +588,22 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
         });
         return;
       }
-      
-      await sseTransport.handlePostMessage(req, res, req.body);
+
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: { code: -32600, message: 'Missing sessionId. Establish SSE connection first via GET /mcp' },
+        id: req.body?.id ?? null
+      });
+      return;
+    }
+
+    const transport = transports[sessionId];
+    if (!transport) {
+      res.status(404).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Session not found or expired' },
+        id: req.body?.id ?? null
+      });
       return;
     }
     await transport.handlePostMessage(req, res, req.body);
