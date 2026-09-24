@@ -34,7 +34,9 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/cors": "^2.8.19",
     "commander": "^12.1.0",
+    "cors": "^2.8.6",
     "dotenv": "^16.4.1",
     "jsonwebtoken": "^9.0.2",
     "localtunnel": "^2.0.2",

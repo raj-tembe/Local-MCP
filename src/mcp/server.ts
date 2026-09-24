@@ -6,8 +6,8 @@ import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js
 import express from 'express';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { statSync, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import { statSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { type AppConfig, defaultConfig } from '../config/config.js';
@@ -537,10 +537,11 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
 export async function createSseHttpServer(config: AppConfig = defaultConfig): Promise<{ app: ReturnType<typeof createMcpExpressApp>; server: any }> {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
+  
   const transports: Record<string, any> = {};
 
   const requireAuth = authMiddleware(config);
-
+  
   app.get('/health', (_req: any, res: any) => {
     res.json({ ok: true, transport: 'sse', port: config.port });
   });
@@ -565,7 +566,20 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
     const transport = new SSEServerTransport('/messages', res);
     const sessionId = transport.sessionId;
     transports[sessionId] = transport;
-    transport.onclose = () => delete transports[sessionId];
+    
+    // Add keep-alive to prevent ngrok/tunnels from closing idle SSE connections
+    const keepAliveInterval = setInterval(() => {
+      if (!res.writableEnded) {
+        res.write(': keep-alive\n\n');
+      } else {
+        clearInterval(keepAliveInterval);
+      }
+    }, 30000);
+    
+    transport.onclose = () => {
+      clearInterval(keepAliveInterval);
+      delete transports[sessionId];
+    };
     const server = createLocalMcpServer(config);
     await server.connect(transport);
   });
