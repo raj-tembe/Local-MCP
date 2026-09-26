@@ -1,8 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import express from 'express';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -534,107 +533,83 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
   return server;
 }
 
-export async function createSseHttpServer(config: AppConfig = defaultConfig): Promise<{ app: ReturnType<typeof createMcpExpressApp>; server: any }> {
+export async function createSseHttpServer(config: AppConfig = defaultConfig): Promise<{ app: express.Express; server: any }> {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
-  
-  const transports: Record<string, any> = {};
+
+  // Keyed by the MCP session id (the `Mcp-Session-Id` header), one live
+  // McpServer + transport pair per connected client (e.g. per Claude custom connector session).
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
 
   const requireAuth = authMiddleware(config);
-  
+
   app.get('/health', (_req: any, res: any) => {
-    res.json({ ok: true, transport: 'sse', port: config.port });
+    res.json({ ok: true, transport: 'http', port: config.port });
   });
 
+  // Claude Connector validation probe / OAuth discovery check:
+  // some clients send a plain GET (Accept: application/json) before ever
+  // speaking MCP, just to sanity-check the endpoint. Answer that here, and
+  // treat anything that accepts text/event-stream as a real transport request.
+  async function handleStreamableRequest(req: any, res: any) {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    let transport = sessionId ? transports[sessionId] : undefined;
+
+    if (!transport) {
+      // A brand-new session is only allowed to start with an initialize call.
+      if (req.method === 'POST' && !sessionId && req.body && req.body.method === 'initialize') {
+        const server = createLocalMcpServer(config);
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (newSessionId: string) => {
+            transports[newSessionId] = transport as StreamableHTTPServerTransport;
+          }
+        });
+
+        transport.onclose = () => {
+          const sid = transport?.sessionId;
+          if (sid) delete transports[sid];
+        };
+
+        await server.connect(transport);
+      } else {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Bad Request: missing or invalid Mcp-Session-Id. Send an initialize request first.' },
+          id: req.body?.id ?? null
+        });
+        return;
+      }
+    }
+
+    await transport.handleRequest(req, res, req.body);
+  }
+
   app.get('/mcp', requireAuth, async (req: any, res: any) => {
-    // Claude Connector validation probe / OAuth discovery check:
-    // If Claude or any client sends a GET request checking metadata/auth or requesting JSON format,
-    // or if Accept header doesn't strictly want text/event-stream, return appropriate server capability metadata
     const accept = req.headers['accept'] || '';
-    if (!accept.includes('text/event-stream')) {
+    if (!accept.includes('text/event-stream') && !req.headers['mcp-session-id']) {
       res.json({
         name: 'local-mcp',
         version: '0.1.0',
-        protocolVersion: '2024-11-05',
+        protocolVersion: '2025-03-26',
         capabilities: { tools: {} },
         authentication: { required: config.auth.requireAuth }
       });
       return;
     }
-
-    // Use /messages as the POST endpoint path so the endpoint event returns /messages?sessionId=...
-    const transport = new SSEServerTransport('/messages', res);
-    const sessionId = transport.sessionId;
-    transports[sessionId] = transport;
-    
-    // Add keep-alive to prevent ngrok/tunnels from closing idle SSE connections
-    const keepAliveInterval = setInterval(() => {
-      if (!res.writableEnded) {
-        res.write(': keep-alive\n\n');
-      } else {
-        clearInterval(keepAliveInterval);
-      }
-    }, 30000);
-    
-    transport.onclose = () => {
-      clearInterval(keepAliveInterval);
-      delete transports[sessionId];
-    };
-    const server = createLocalMcpServer(config);
-    await server.connect(transport);
+    await handleStreamableRequest(req, res);
   });
 
   app.post('/mcp', requireAuth, async (req: any, res: any) => {
-    const sessionId = (req.query.sessionId as string | undefined) ?? (req.body && req.body.sessionId ? String(req.body.sessionId) : undefined);
-    const isInitialize = req.body && req.body.method === 'initialize';
-
-    if (!sessionId) {
-      if (isInitialize) {
-        // Return initialize response directly - client should then GET /mcp to establish SSE
-        res.json({
-          jsonrpc: '2.0',
-          id: req.body.id,
-          result: {
-            protocolVersion: '2024-11-05',
-            capabilities: { tools: {} },
-            serverInfo: { name: 'local-mcp', version: '0.1.0' }
-          }
-        });
-        return;
-      }
-
-      res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32600, message: 'Missing sessionId. Establish SSE connection first via GET /mcp' },
-        id: req.body?.id ?? null
-      });
-      return;
-    }
-
-    const transport = transports[sessionId];
-    if (!transport) {
-      res.status(404).json({
-        jsonrpc: '2.0',
-        error: { code: -32000, message: 'Session not found or expired' },
-        id: req.body?.id ?? null
-      });
-      return;
-    }
-    await transport.handlePostMessage(req, res, req.body);
+    await handleStreamableRequest(req, res);
   });
 
-  app.post('/messages', requireAuth, async (req: any, res: any) => {
-    const sessionId = (req.query.sessionId as string | undefined) ?? (req.body && req.body.sessionId ? String(req.body.sessionId) : undefined);
-    const transport = sessionId ? transports[sessionId] : undefined;
-    if (!transport) {
-      res.status(404).json({ ok: false, reason: 'Session not found' });
-      return;
-    }
-    await transport.handlePostMessage(req, res, req.body);
+  app.delete('/mcp', requireAuth, async (req: any, res: any) => {
+    await handleStreamableRequest(req, res);
   });
 
   const instance = app.listen(config.port, () => {
-    console.log(`Local-MCP SSE server listening on port ${config.port}`);
+    console.log(`Local-MCP Streamable HTTP server listening on port ${config.port}`);
   });
 
   return { app, server: instance };
