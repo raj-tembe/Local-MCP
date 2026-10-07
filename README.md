@@ -11,13 +11,22 @@ npm run build
 node dist/cli.js start --transport sse --port 3000
 
 # 2. Expose publicly via tunnel (new terminal)
-npx localtunnel --port 3000
-# → https://abc123.loca.lt
+PORT=3000 node examples/expose-cloudflared/run-cloudflared.js
+# → https://random-words-here.trycloudflare.com
 
 # 3. In Claude: Customize → Connectors → Add custom connector
-#    Enter: https://abc123.loca.lt/mcp
+#    Enter: https://random-words-here.trycloudflare.com/mcp
 #    Authentication: "No sign-in" + add API key in Request Headers (optional)
 ```
+
+> Use Cloudflare Tunnel (`cloudflared`), not ngrok's free tier, for this step.
+> ngrok's free domains inject a browser-warning interstitial page in front of
+> every request unless the caller sends a special header, and Claude's
+> connector doesn't send it — the interstitial silently breaks the MCP
+> handshake and Claude reports "Couldn't reload tools from the server."
+> Cloudflare Tunnel has no such interstitial and needs no account or paid
+> plan, which also makes it the right default for an open-source project.
+> See `examples/expose-cloudflared/README.md` for details.
 
 ### Authentication
 
@@ -58,9 +67,9 @@ Create `~/.local-mcp/config.json`:
 
 | Tool | Command | Notes |
 |------|---------|-------|
+| **Cloudflare Tunnel** (recommended) | `cloudflared tunnel --url http://localhost:3000` | Free, no account needed, no warning interstitial — see `examples/expose-cloudflared/` |
 | **localtunnel** | `npx localtunnel --port 3000` | Free, random subdomain |
-| **ngrok** | `ngrok http 3000` | Free tier, fixed domain on paid |
-| **Cloudflare Tunnel** | `cloudflared tunnel --url http://localhost:3000` | Free, custom domains |
+| **ngrok** | `ngrok http 3000` | Free tier injects a browser-warning interstitial that breaks Claude's connector handshake (see `examples/expose-ngrok/README.md`); fixed domain and interstitial removal require a paid plan |
 | **VS Code Port Forward** | Built-in | Only works in Codespaces |
 
 ### Tool Filtering (Allowlist/Denylist)

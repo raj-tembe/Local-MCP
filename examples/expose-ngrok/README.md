@@ -2,6 +2,16 @@ Expose Local-MCP via ngrok (example)
 
 This folder shows a small example for exposing the SSE/HTTP MCP server publicly using ngrok so Claude (or other remote MCP clients) can connect to your local server.
 
+> **Heads up:** on ngrok's free tier, every request to your `*.ngrok-free.app`
+> / `*.ngrok-free.dev` URL is intercepted by an HTML browser-warning
+> interstitial unless the request includes an `ngrok-skip-browser-warning`
+> header. Claude's custom-connector client does not send that header, so the
+> interstitial eats the MCP handshake and Claude reports "Couldn't reload
+> tools from the server" even though your server is running fine. Removing
+> the interstitial requires a paid ngrok plan. If you'd rather not require
+> that, use `examples/expose-cloudflared/` instead — Cloudflare Tunnel has no
+> interstitial and is free with no account needed.
+
 Prerequisites
 - Install Local-MCP and build (or run dev):
 
