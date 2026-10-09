@@ -9,7 +9,7 @@ export const securityConfigSchema = z.object({
   deniedCommands: z.array(z.string()).default(['rm', 'sudo', 'dd', 'mkfs', 'shutdown', 'reboot']),
   allowedPaths: z.array(z.string()).default(['~', '/tmp', '/var/tmp']),
   deniedPaths: z.array(z.string()).default(['/etc', '/root', '~/.ssh', '/proc', '/sys']),
-  requireApproval: z.array(z.string()).default(['fs.write', 'shell.execute']),
+  requireApproval: z.array(z.string()).default(['fs.write', 'shell.execute', 'code.run', 'package.install', 'process.start']),
   maxCommandLength: z.number().default(4096),
   sessionTimeoutMs: z.number().default(300000),
   rateLimitPerMinute: z.number().default(60)
@@ -68,7 +68,7 @@ export const defaultConfig: AppConfig = {
     deniedCommands: ['rm', 'sudo', 'dd', 'mkfs', 'shutdown', 'reboot'],
     allowedPaths: ['~', '/tmp', '/var/tmp'],
     deniedPaths: ['/etc', '/root', '~/.ssh', '/proc', '/sys'],
-    requireApproval: ['fs.write', 'shell.execute'],
+    requireApproval: ['fs.write', 'shell.execute', 'code.run', 'package.install', 'process.start'],
     maxCommandLength: 4096,
     sessionTimeoutMs: 300000,
     rateLimitPerMinute: 60

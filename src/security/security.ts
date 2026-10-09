@@ -50,10 +50,14 @@ export class SecurityEngine {
     const command = typeof details.command === 'string' ? details.command : undefined;
     const toolPath = typeof details.path === 'string' ? details.path : typeof details.filePath === 'string' ? details.filePath : undefined;
     const sessionId = typeof details.sessionId === 'string' ? details.sessionId : undefined;
+    // Optional content hash so an approval covers exactly one payload (e.g. one script),
+    // not every future call that happens to use the same interpreter.
+    const fingerprint = typeof details.fingerprint === 'string' ? details.fingerprint : undefined;
 
     if (command) keyParts.push(`command:${SecurityEngine.normalizeCommand(command)}`);
     if (toolPath) keyParts.push(`path:${SecurityEngine.resolvePath(toolPath)}`);
     if (sessionId) keyParts.push(`session:${sessionId}`);
+    if (fingerprint) keyParts.push(`fp:${fingerprint}`);
 
     return keyParts.join(':');
   }

@@ -94,6 +94,39 @@ Or in config:
 
 **Default denied tools**: `shell.execute`, `terminal.write`, `fs.write`, `fs.mkdir`, `user.clipboard.write`
 
+### Running Code, Installing Dependencies, Background Processes
+
+These tools let Claude write and run code on your machine, set up a project's dependencies, and keep long-running things (dev servers, watchers, training jobs) going in the background.
+
+| Tool | What it does |
+|------|--------------|
+| `runtime.detect` | Lists which runtimes and package managers are installed (node, python3, pip3, git, go, cargo, ...) with versions |
+| `code.run` | Runs a snippet in `python`, `javascript`, `typescript`, `bash`, `sh`, `ruby` or `go`; returns stdout, stderr, exit code. Optional `args`, `stdin`, `cwd`, `timeoutMs` (default 30s, max 10 min) |
+| `package.install` | Installs dependencies with `npm`, `pnpm`, `yarn`, `bun`, `pip`, `uv`, `cargo` or `go`. Pass `packages`, or omit them to install from the project manifest. pip supports `venv` (created if missing) and `requirementsFile` |
+| `process.start` | Starts a command in the background and returns an id (waits briefly so startup errors show up) |
+| `process.list` / `process.logs` / `process.stop` | Inspect, tail and stop background processes (stop also ends child processes) |
+
+How they are protected:
+
+- `code.run`, `package.install` and `process.start` are in `security.requireApproval` by default, so you are asked in the terminal running Local-MCP before each new action. With no TTY available, approval is denied.
+- Approvals for these tools are scoped to the exact payload (a hash of the code or install plan), so approving one script does not approve every future script that uses the same interpreter.
+- Commands run without a shell (`code.run`, `package.install`), package names are validated (no flags or shell characters), output is capped at 1 MB, and timeouts kill the whole process tree.
+- `security.allowedCommands` and `deniedCommands` are checked against the interpreter or package manager (`python3`, `npm`, ...). The default allowlist only contains `ls`, `cat`, `git`, `npm`, `node`, `echo`, so add what you want Claude to use. Treat this as a permission gate, not a sandbox: once code is approved, it runs with your user's privileges.
+- To switch any of these off, add the tool name to `toolFilter.deniedTools`.
+
+Example config enabling Python and a few package managers:
+
+```json
+{
+  "security": {
+    "allowedCommands": ["ls", "cat", "git", "echo", "node", "npm", "pnpm", "python3", "pip", "bash"],
+    "requireApproval": ["fs.write", "shell.execute", "code.run", "package.install", "process.start"]
+  }
+}
+```
+
+Note that `npm`/`pnpm`/`yarn` run package lifecycle scripts by default; pass `ignoreScripts: true` when installing packages you do not trust.
+
 ### Programmatic Access (Claude API)
 
 Use the Messages API with `mcp_servers` and `mcp_toolset`:
@@ -286,9 +319,15 @@ Tool| Purpose
 "fs.write"| Write a file
 "fs.list"| List files
 "fs.mkdir"| Create a directory
-"process.list"| List user processes
+"process.list"| List background processes started with process.start
 "user.input"| Request input from the user
 "user.confirm"| Request confirmation
+"code.run"| Run a code snippet (python, javascript, typescript, bash, ruby, go)
+"package.install"| Install dependencies (npm, pnpm, yarn, bun, pip, uv, cargo, go)
+"runtime.detect"| Detect installed runtimes and package managers
+"process.start"| Start a background process
+"process.logs"| Read background process output
+"process.stop"| Stop a background process
 
 The available tools may vary depending on the configuration.
 

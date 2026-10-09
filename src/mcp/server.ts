@@ -6,7 +6,7 @@ import express from 'express';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
-import { statSync, readFileSync } from 'node:fs';
+import { statSync, readFileSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { type AppConfig, defaultConfig } from '../config/config.js';
@@ -14,7 +14,11 @@ import { SecurityEngine, createSessionId } from '../security/security.js';
 import { AuditLogger } from '../audit/audit.js';
 import { TerminalManager } from '../terminal/manager.js';
 import ConnectorsStore from '../connectors/store.js';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { runProcess, clampTimeout, type RunResult } from '../exec/run.js';
+import { SUPPORTED_LANGUAGES, findExecutable, resolveLanguage, runCode } from '../exec/code.js';
+import { PACKAGE_MANAGERS, buildInstallPlan } from '../exec/packages.js';
+import { sharedProcessManager, summarize as summarizeProcess, installExitCleanup } from '../process/manager.js';
 
 const execAsync = promisify(exec);
 
@@ -44,6 +48,40 @@ function authMiddleware(config: AppConfig) {
 }
 
 const textContent = (text: string) => ({ type: 'text' as const, text });
+
+function fingerprintOf(...parts: string[]): string {
+  return createHash('sha256').update(parts.join('\u0000')).digest('hex').slice(0, 32);
+}
+
+function truncateForLog(text: string, max = 300): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max)}...` : flat;
+}
+
+function runResultToToolResult(result: RunResult, extra: Record<string, unknown> = {}) {
+  const parts: string[] = [];
+  if (result.stdout) parts.push(result.stdout.replace(/\n$/, ''));
+  if (result.stderr) parts.push(`[stderr]\n${result.stderr.replace(/\n$/, '')}`);
+  if (result.spawnError) parts.push(`[error] ${result.spawnError}`);
+  if (result.timedOut) parts.push('[timed out and was killed]');
+  if (result.truncated) parts.push('[output truncated]');
+  parts.push(`[exit ${result.exitCode ?? result.signal ?? 'unknown'} in ${result.durationMs}ms]`);
+  const failed = result.exitCode !== 0 || result.timedOut || Boolean(result.spawnError);
+  return {
+    content: [textContent(parts.join('\n'))],
+    ...(failed ? { isError: true } : {}),
+    structuredContent: {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      truncated: result.truncated,
+      durationMs: result.durationMs,
+      ...extra
+    }
+  };
+}
 
 function denyResult(reason: string, details?: Record<string, unknown>) {
   const payload: Record<string, unknown> = {
@@ -95,6 +133,7 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
   const audit = new AuditLogger(config.logging.auditFile);
   const terminalManager = new TerminalManager();
   const connectors = new ConnectorsStore();
+  const processes = sharedProcessManager;
 
   const server = new McpServer({
     name: 'local-mcp',
@@ -522,6 +561,222 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
     return { content: [{ type: 'text', text: `stderr: ${content}` }], structuredContent: { content } };
   });
 
+  // ---------------------------------------------------------------------------
+  // Code execution, dependency installation and background processes
+  // ---------------------------------------------------------------------------
+
+  server.registerTool('runtime.detect', {
+    description: 'Detect which language runtimes and package managers are installed (node, python, git, cargo, ...) and their versions. Call this before code.run or package.install.',
+    inputSchema: {}
+  }, async (_args, extra) => {
+    const decision = await security.authorize('runtime.detect', {});
+    if (!decision.allowed) {
+      return denyResult(decision.reason ?? 'Permission denied', { tool: 'runtime.detect', sessionId: extra.sessionId });
+    }
+
+    const probes: Array<[string, string[]]> = [
+      ['node', ['--version']], ['npm', ['--version']], ['pnpm', ['--version']], ['yarn', ['--version']], ['bun', ['--version']],
+      ['tsx', ['--version']], ['python3', ['--version']], ['pip3', ['--version']], ['uv', ['--version']],
+      ['git', ['--version']], ['go', ['version']], ['cargo', ['--version']], ['rustc', ['--version']],
+      ['ruby', ['--version']], ['bash', ['--version']], ['docker', ['--version']]
+    ];
+    const entries = await Promise.all(probes.map(async ([file, args]) => {
+      const location = findExecutable(file);
+      if (!location) return [file, { installed: false }] as const;
+      const result = await runProcess({ file, args, timeoutMs: 5000, maxOutputBytes: 4000 });
+      const version = (result.stdout || result.stderr).split('\n')[0]?.trim();
+      return [file, { installed: true, version, path: location }] as const;
+    }));
+    const runtimes = Object.fromEntries(entries);
+    return {
+      content: [textContent(JSON.stringify(runtimes, null, 2))],
+      structuredContent: { runtimes }
+    };
+  });
+
+  server.registerTool('code.run', {
+    description: 'Run a code snippet (python, javascript, typescript, bash, sh, ruby, go) and return stdout, stderr and the exit code. The code is written to a temp file and executed directly; use cwd to run it inside a project. Subject to approval.',
+    inputSchema: {
+      language: z.enum(SUPPORTED_LANGUAGES).describe('Language of the snippet'),
+      code: z.string().min(1).max(200_000).describe('Source code to run'),
+      args: z.array(z.string()).max(50).optional().describe('Command-line arguments passed to the script'),
+      stdin: z.string().max(1_000_000).optional().describe('Text piped to the script on stdin'),
+      cwd: z.string().optional().describe('Working directory (defaults to a fresh temp directory)'),
+      timeoutMs: z.number().int().positive().optional().describe('Timeout in ms (default 30000, max 600000)')
+    }
+  }, async ({ language, code, args, stdin, cwd, timeoutMs }, extra) => {
+    const sessionId = extra.sessionId ?? createSessionId();
+    const resolved = resolveLanguage(language);
+    if (!resolved) {
+      const message = `No interpreter for '${language}' was found on PATH. Run runtime.detect to see what is installed.`;
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+
+    const decision = await security.authorize('code.run', {
+      command: resolved.file,
+      cwd,
+      language,
+      code,
+      args,
+      fingerprint: fingerprintOf(language, code, JSON.stringify(args ?? []), stdin ?? '', cwd ?? '')
+    });
+    if (!decision.allowed) {
+      audit.log({ timestamp: new Date().toISOString(), sessionId, tool: 'code.run', decision: 'deny', result: decision.reason ?? 'Denied' });
+      return denyResult(decision.reason ?? 'Permission denied', { tool: 'code.run', sessionId, language, cwd });
+    }
+
+    const result = await runCode({ resolved, code, args, stdin, cwd, timeoutMs });
+    audit.log({ timestamp: new Date().toISOString(), sessionId, tool: 'code.run', decision: 'allow', result: `${language} exit=${result.exitCode} ${result.timedOut ? 'timeout ' : ''}${truncateForLog(result.stdout || result.stderr)}` });
+    return runResultToToolResult(result, { language, interpreter: resolved.file });
+  });
+
+  server.registerTool('package.install', {
+    description: 'Install dependencies with npm, pnpm, yarn, bun, pip, uv, cargo or go. Pass packages to add them, or omit packages to install from the project manifest (package.json, requirements.txt via requirementsFile, pyproject.toml, Cargo.toml, go.mod). Runs without a shell. Subject to approval.',
+    inputSchema: {
+      manager: z.enum(PACKAGE_MANAGERS).describe('Package manager to use'),
+      packages: z.array(z.string()).max(50).optional().describe("Packages to install, e.g. ['express', 'zod@3']"),
+      cwd: z.string().optional().describe('Project directory (defaults to the server working directory)'),
+      dev: z.boolean().optional().describe('Install as a dev dependency where supported'),
+      global: z.boolean().optional().describe('Install globally (npm, pnpm, yarn, bun, cargo, go)'),
+      ignoreScripts: z.boolean().optional().describe('Skip package lifecycle scripts (npm, pnpm, yarn, bun)'),
+      venv: z.string().optional().describe('pip only: virtualenv directory to install into (created if missing)'),
+      requirementsFile: z.string().optional().describe('pip only: install from this requirements file'),
+      timeoutMs: z.number().int().positive().optional().describe('Timeout in ms (default 300000, max 600000)')
+    }
+  }, async ({ manager, packages, cwd, dev, global, ignoreScripts, venv, requirementsFile, timeoutMs }, extra) => {
+    const sessionId = extra.sessionId ?? createSessionId();
+    const python = findExecutable('python3') ? 'python3' : findExecutable('python') ? 'python' : undefined;
+    const venvDir = venv ? path.resolve(cwd ?? process.cwd(), venv) : undefined;
+    const plan = buildInstallPlan(
+      { manager, packages, dev, global, ignoreScripts, venv: venvDir, requirementsFile },
+      { venvExists: venvDir ? existsSync(venvDir) : false, python }
+    );
+    if (!plan.ok) {
+      return { content: [textContent(plan.error)], isError: true, structuredContent: { error: plan.error } };
+    }
+
+    const decision = await security.authorize('package.install', {
+      command: manager,
+      cwd,
+      manager,
+      packages: packages ?? [],
+      global: Boolean(global),
+      plan: plan.display,
+      fingerprint: fingerprintOf(plan.display, cwd ?? '')
+    });
+    if (!decision.allowed) {
+      audit.log({ timestamp: new Date().toISOString(), sessionId, tool: 'package.install', decision: 'deny', result: decision.reason ?? 'Denied' });
+      return denyResult(decision.reason ?? 'Permission denied', { tool: 'package.install', sessionId, manager, packages, cwd });
+    }
+
+    const stepResults: Array<{ command: string; exitCode: number | null; timedOut: boolean; durationMs: number }> = [];
+    let output = '';
+    let failed = false;
+    for (const step of plan.steps) {
+      const label = [step.file, ...step.args].join(' ');
+      if (!step.file.includes(path.sep) && !findExecutable(step.file)) {
+        output += `$ ${label}\n'${step.file}' was not found on PATH.\n`;
+        stepResults.push({ command: label, exitCode: null, timedOut: false, durationMs: 0 });
+        failed = true;
+        break;
+      }
+      const result = await runProcess({ file: step.file, args: step.args, cwd, timeoutMs: clampTimeout(timeoutMs, 300_000) });
+      output += `$ ${label}\n${result.stdout}${result.stderr}${result.spawnError ? `${result.spawnError}\n` : ''}`;
+      stepResults.push({ command: label, exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs });
+      if (result.exitCode !== 0 || result.timedOut || result.spawnError) {
+        failed = true;
+        break;
+      }
+    }
+
+    audit.log({ timestamp: new Date().toISOString(), sessionId, tool: 'package.install', decision: 'allow', result: `${plan.display} ${failed ? 'FAILED' : 'ok'}` });
+    return {
+      content: [textContent(output)],
+      ...(failed ? { isError: true } : {}),
+      structuredContent: { ok: !failed, steps: stepResults }
+    };
+  });
+
+  server.registerTool('process.start', {
+    description: 'Start a long-running command in the background (dev server, watcher, training job) and return an id. Use process.logs to read its output and process.stop to end it. Subject to approval.',
+    inputSchema: {
+      command: z.string().min(1).describe('Command to run (executed through the shell)'),
+      cwd: z.string().optional().describe('Working directory'),
+      name: z.string().max(80).optional().describe('Optional label'),
+      waitMs: z.number().int().min(0).max(10_000).optional().describe('Wait this long (default 1000) and return early output / startup failures')
+    }
+  }, async ({ command, cwd, name, waitMs }, extra) => {
+    const sessionId = extra.sessionId ?? createSessionId();
+    const decision = await security.authorize('process.start', {
+      command,
+      cwd,
+      fingerprint: fingerprintOf(command, cwd ?? '')
+    });
+    if (!decision.allowed) {
+      audit.log({ timestamp: new Date().toISOString(), sessionId, tool: 'process.start', decision: 'deny', result: decision.reason ?? 'Denied' });
+      return denyResult(decision.reason ?? 'Permission denied', { tool: 'process.start', sessionId, command, cwd });
+    }
+
+    try {
+      const entry = processes.start(command, { cwd, name });
+      await new Promise((resolve) => setTimeout(resolve, waitMs ?? 1000));
+      audit.log({ timestamp: new Date().toISOString(), sessionId, tool: 'process.start', decision: 'allow', result: `${entry.id} pid=${entry.pid} ${truncateForLog(command)}` });
+      const payload = { ...summarizeProcess(entry), initialOutput: processes.logs(entry.id, 4000) ?? '' };
+      return { content: [textContent(JSON.stringify(payload, null, 2))], structuredContent: payload };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('process.list', {
+    description: 'List background processes started with process.start, with their status and exit codes.',
+    inputSchema: {}
+  }, async () => {
+    const decision = await security.authorize('process.list', {});
+    if (!decision.allowed) return denyResult(decision.reason ?? 'Permission denied', { tool: 'process.list' });
+    const list = processes.list().map(summarizeProcess);
+    return { content: [textContent(JSON.stringify(list, null, 2))], structuredContent: { processes: list } };
+  });
+
+  server.registerTool('process.logs', {
+    description: 'Read the most recent output (stdout and stderr combined) of a background process.',
+    inputSchema: {
+      id: z.string().describe('Process id from process.start'),
+      tailChars: z.number().int().positive().max(100_000).optional().describe('How many trailing characters to return (default 8000)')
+    }
+  }, async ({ id, tailChars }) => {
+    const decision = await security.authorize('process.logs', {});
+    if (!decision.allowed) return denyResult(decision.reason ?? 'Permission denied', { tool: 'process.logs' });
+    const entry = processes.get(id);
+    if (!entry) {
+      const message = `Unknown process id: ${id}`;
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+    const logs = processes.logs(id, tailChars ?? 8000) ?? '';
+    return {
+      content: [textContent(logs || '(no output yet)')],
+      structuredContent: { ...summarizeProcess(entry), logs }
+    };
+  });
+
+  server.registerTool('process.stop', {
+    description: 'Stop a background process (and its child processes) started with process.start.',
+    inputSchema: { id: z.string().describe('Process id from process.start') }
+  }, async ({ id }, extra) => {
+    const sessionId = extra.sessionId ?? createSessionId();
+    const decision = await security.authorize('process.stop', {});
+    if (!decision.allowed) return denyResult(decision.reason ?? 'Permission denied', { tool: 'process.stop' });
+    const entry = await processes.stop(id);
+    if (!entry) {
+      const message = `Unknown process id: ${id}`;
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+    audit.log({ timestamp: new Date().toISOString(), sessionId, tool: 'process.stop', decision: 'allow', result: `${id} -> ${entry.status}` });
+    const payload = summarizeProcess(entry);
+    return { content: [textContent(JSON.stringify(payload, null, 2))], structuredContent: payload };
+  });
+
   server.registerResource('system://info', 'system://info', { mimeType: 'application/json' }, async () => ({
     contents: [{ uri: 'system://info', mimeType: 'application/json', text: JSON.stringify({ platform: process.platform, cwd: process.cwd(), user: process.env.USER || process.env.USERNAME || 'unknown' }) }]
   }));
@@ -534,6 +789,7 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
 }
 
 export async function createSseHttpServer(config: AppConfig = defaultConfig): Promise<{ app: express.Express; server: any }> {
+  installExitCleanup();
   const app = express();
   app.use(express.json({ limit: '4mb' }));
 
@@ -621,6 +877,7 @@ export async function startLocalMcpTransport(config: AppConfig = defaultConfig):
     return;
   }
 
+  installExitCleanup();
   const server = createLocalMcpServer(config);
   const transport = new StdioServerTransport();
   await server.connect(transport);
