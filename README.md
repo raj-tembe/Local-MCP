@@ -28,6 +28,32 @@ PORT=3000 node examples/expose-cloudflared/run-cloudflared.js
 > plan, which also makes it the right default for an open-source project.
 > See `examples/expose-cloudflared/README.md` for details.
 
+### Standalone Binary (no Node.js required)
+
+Every tagged release publishes ready-to-run binaries on the GitHub Releases page, so you can use Local-MCP without installing Node.js or npm:
+
+| Platform | File |
+|----------|------|
+| Linux x64 / arm64 | `local-mcp-<version>-linux-x64.tar.gz`, `...-linux-arm64.tar.gz` |
+| macOS Apple Silicon / Intel | `local-mcp-<version>-darwin-arm64.tar.gz`, `...-darwin-x64.tar.gz` |
+| Windows x64 | `local-mcp-<version>-win32-x64.zip` |
+
+```bash
+# verify, extract and run (Linux/macOS)
+sha256sum -c --ignore-missing SHA256SUMS.txt        # macOS: shasum -a 256 -c SHA256SUMS.txt
+tar -xzf local-mcp-<version>-linux-x64.tar.gz
+./local-mcp-<version>-linux-x64/local-mcp start --transport http --port 8080
+```
+
+A binary only runs on the OS and CPU it was built for, so pick the file that matches your machine. Notes:
+
+- **Unsigned builds.** On macOS, a browser-downloaded binary is quarantined by Gatekeeper; run `xattr -d com.apple.quarantine ./local-mcp` once (downloading with `curl` avoids this). On Windows, SmartScreen may ask you to choose "More info" then "Run anyway".
+- **What is not included.** PTY terminal sessions (`terminal.create`, `terminal.write`, ...) need the native `node-pty` module, which cannot live inside a single executable, so they report "not available" (`runtime.detect` shows `ptyAvailable: false`). Everything else works, including `shell.execute`, `code.run` and `process.start`.
+- **Interpreters are not bundled.** `code.run` and `package.install` use the tools already on your machine (for example `python3`, `node`, `npm`), so install what you want Claude to use.
+- **Build it yourself.** `npm install && npm run build:binary` writes `dist-bin/local-mcp-<platform>-<arch>`, and `npm run smoke:binary -- dist-bin/<file>` runs a quick end-to-end check against it. Each release binary corresponds to the source at its git tag.
+
+`node-pty` is also an optional dependency of the npm package: if it cannot be built on your machine, installation still succeeds and only the PTY terminal tools are unavailable. Set `LOCAL_MCP_DISABLE_PTY=1` to turn them off explicitly.
+
 ### Authentication
 
 #### Option 1: API Key (Recommended for tunnels)

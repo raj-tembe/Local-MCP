@@ -2,14 +2,24 @@
   "name": "local-mcp",
   "version": "0.1.0",
   "description": "Secure local terminal bridge for cloud-based AI via MCP",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/raj-tembe/Local-MCP.git"
+  },
+  "bugs": {
+    "url": "https://github.com/raj-tembe/Local-MCP/issues"
+  },
+  "homepage": "https://github.com/raj-tembe/Local-MCP#readme",
   "type": "module",
   "bin": {
     "local-mcp": "dist/cli.js"
   },
   "files": [
     "dist",
+    "!dist/**/*.test.*",
     "README.md",
     "SECURITY.md",
+    "LICENSE",
     "docs",
     "examples"
   ],
@@ -18,7 +28,10 @@
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "test": "vitest run",
-    "lint": "eslint . --ext .ts"
+    "lint": "eslint . --ext .ts",
+    "prepublishOnly": "npm run build && npm test",
+    "build:binary": "node scripts/build-binary.mjs",
+    "smoke:binary": "node scripts/smoke-binary.mjs"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -38,9 +51,9 @@
     "commander": "^12.1.0",
     "cors": "^2.8.6",
     "dotenv": "^16.4.1",
+    "express": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
     "localtunnel": "^2.0.2",
-    "node-pty": "^1.0.0",
     "pino": "^9.0.0",
     "ws": "^8.0.0",
     "zod": "^3.25.0"
@@ -51,9 +64,14 @@
     "@types/node": "^22.7.4",
     "@types/supertest": "^7.2.1",
     "@types/ws": "^8.0.0",
+    "esbuild": "^0.28.2",
+    "postject": "1.0.0-alpha.6",
     "supertest": "^7.2.2",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.5"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
   }
 }

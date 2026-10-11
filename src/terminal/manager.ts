@@ -1,11 +1,74 @@
 import { randomUUID } from 'node:crypto';
-import { spawn, type IPty } from 'node-pty';
+import { createRequire } from 'node:module';
+
+/** The small part of node-pty's API that Local-MCP uses, so node-pty's types are not required. */
+export interface PtyProcess {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(signal?: string): void;
+  onData(listener: (data: string) => void): unknown;
+}
+
+export interface PtyModule {
+  spawn(
+    file: string,
+    args: string[],
+    options: { cwd?: string; env?: Record<string, string | undefined>; cols?: number; rows?: number; name?: string }
+  ): PtyProcess;
+}
+
+export class PtyUnavailableError extends Error {
+  constructor(reason: string) {
+    super(
+      `PTY terminal sessions are not available: ${reason}. ` +
+      'Everything else works. For commands use shell.execute, code.run or process.start. ' +
+      "To enable PTY sessions, install node-pty's build prerequisites (Python 3, make and a C++ compiler on Linux) and run 'npm install node-pty' next to Local-MCP."
+    );
+    this.name = 'PtyUnavailableError';
+  }
+}
+
+let cachedPty: PtyModule | undefined;
+
+/**
+ * node-pty is a native addon and an optional dependency: it is loaded on first use so that a
+ * machine where it could not be built can still run every other tool. Set LOCAL_MCP_DISABLE_PTY=1
+ * to turn PTY sessions off explicitly.
+ */
+export function loadPty(): PtyModule {
+  if (process.env.LOCAL_MCP_DISABLE_PTY === '1') {
+    throw new PtyUnavailableError('disabled by LOCAL_MCP_DISABLE_PTY=1');
+  }
+  if (cachedPty) return cachedPty;
+
+  // import.meta.url is not defined in the single-file binary build; treat that as "not bundled".
+  const base: unknown = import.meta.url;
+  if (typeof base !== 'string') {
+    throw new PtyUnavailableError('this build does not include the node-pty native module');
+  }
+  try {
+    cachedPty = createRequire(base)('node-pty') as PtyModule;
+    return cachedPty;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    throw new PtyUnavailableError(`the optional node-pty module could not be loaded (${reason})`);
+  }
+}
+
+export function isPtyAvailable(): boolean {
+  try {
+    loadPty();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type TerminalSession = {
   id: string;
   shell: string;
   cwd?: string;
-  pty: IPty;
+  pty: PtyProcess;
   buffer: string;
   createdAt: number;
   lastActivity: number;
@@ -14,7 +77,10 @@ export type TerminalSession = {
 export class TerminalManager {
   private readonly sessions = new Map<string, TerminalSession>();
 
+  constructor(private readonly loader: () => PtyModule = loadPty) {}
+
   createSession(shell = 'bash', options: { cwd?: string; env?: Record<string, string> } = {}): TerminalSession {
+    const { spawn } = this.loader();
     const id = randomUUID();
     const pty = spawn(shell, [], {
       cwd: options.cwd ?? process.cwd(),

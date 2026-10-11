@@ -12,7 +12,7 @@ import path from 'node:path';
 import { type AppConfig, defaultConfig } from '../config/config.js';
 import { SecurityEngine, createSessionId } from '../security/security.js';
 import { AuditLogger } from '../audit/audit.js';
-import { TerminalManager } from '../terminal/manager.js';
+import { TerminalManager, isPtyAvailable } from '../terminal/manager.js';
 import ConnectorsStore from '../connectors/store.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { runProcess, clampTimeout, type RunResult } from '../exec/run.js';
@@ -566,7 +566,7 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
   // ---------------------------------------------------------------------------
 
   server.registerTool('runtime.detect', {
-    description: 'Detect which language runtimes and package managers are installed (node, python, git, cargo, ...) and their versions. Call this before code.run or package.install.',
+    description: 'Detect which language runtimes and package managers are installed (node, python, git, cargo, ...) and their versions, and whether PTY terminal sessions (terminal.create) are available. Call this before code.run or package.install.',
     inputSchema: {}
   }, async (_args, extra) => {
     const decision = await security.authorize('runtime.detect', {});
@@ -588,9 +588,10 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
       return [file, { installed: true, version, path: location }] as const;
     }));
     const runtimes = Object.fromEntries(entries);
+    const ptyAvailable = isPtyAvailable();
     return {
-      content: [textContent(JSON.stringify(runtimes, null, 2))],
-      structuredContent: { runtimes }
+      content: [textContent(JSON.stringify({ runtimes, ptyAvailable }, null, 2))],
+      structuredContent: { runtimes, ptyAvailable }
     };
   });
 
