@@ -12,6 +12,7 @@ export const securityConfigSchema = z.object({
   requireApproval: z.array(z.string()).default(['fs.write', 'shell.execute', 'code.run', 'package.install', 'process.start']),
   maxCommandLength: z.number().default(4096),
   sessionTimeoutMs: z.number().default(300000),
+  approvalTimeoutMs: z.number().int().nonnegative().default(60000),
   rateLimitPerMinute: z.number().default(60)
 });
 
@@ -71,6 +72,7 @@ export const defaultConfig: AppConfig = {
     requireApproval: ['fs.write', 'shell.execute', 'code.run', 'package.install', 'process.start'],
     maxCommandLength: 4096,
     sessionTimeoutMs: 300000,
+    approvalTimeoutMs: 60000,
     rateLimitPerMinute: 60
   },
   logging: {
@@ -150,6 +152,9 @@ export function mergeConfig(base: AppConfig, incoming: Partial<AppConfig> = {}):
   };
 }
 
+// Each override below only sets the field it names. It must NOT copy default values for the
+// rest of its section: overrides are merged over the config file, so copied defaults would
+// silently discard whatever the file set (e.g. allowedCommands) as soon as one env var is used.
 export function envOverrides(): Partial<AppConfig> {
   const config: Partial<AppConfig> = {};
 
@@ -169,60 +174,71 @@ export function envOverrides(): Partial<AppConfig> {
   const defaultMode = process.env.LOCAL_MCP_DEFAULT_MODE;
   if (defaultMode && ['ask', 'allow', 'deny'].includes(defaultMode)) {
     config.security = {
-      ...(config.security ?? defaultConfig.security),
+      ...(config.security ?? {}),
       defaultMode: defaultMode as 'ask' | 'allow' | 'deny'
-    };
+    } as AppConfig['security'];
+  }
+
+  const approvalTimeout = process.env.LOCAL_MCP_APPROVAL_TIMEOUT_MS;
+  if (approvalTimeout) {
+    const parsed = Number.parseInt(approvalTimeout, 10);
+    if (!Number.isNaN(parsed) && parsed >= 0) {
+      config.security = {
+        ...(config.security ?? {}),
+        approvalTimeoutMs: parsed
+      } as AppConfig['security'];
+    }
   }
 
   const auditFile = process.env.LOCAL_MCP_AUDIT_FILE;
   if (auditFile) {
     config.logging = {
-      ...(config.logging ?? defaultConfig.logging),
+      ...(config.logging ?? {}),
       auditFile
-    };
+    } as AppConfig['logging'];
   }
 
   const relayUrl = process.env.LOCAL_MCP_RELAY_URL;
   const token = process.env.LOCAL_MCP_TOKEN;
   if (relayUrl || token) {
     config.cloud = {
-      ...(config.cloud ?? defaultConfig.cloud),
+      ...(config.cloud ?? {}),
       relayUrl: relayUrl ?? '',
       token: token ?? ''
-    };
+    } as AppConfig['cloud'];
   }
 
   const apiKeys = process.env.LOCAL_MCP_API_KEYS;
   if (apiKeys) {
     config.auth = {
-      ...(config.auth ?? defaultConfig.auth),
+      ...(config.auth ?? {}),
       apiKeys: apiKeys.split(',').map(k => k.trim()).filter(k => k),
       requireAuth: true
-    };
+    } as AppConfig['auth'];
   }
 
   const requireAuth = process.env.LOCAL_MCP_REQUIRE_AUTH;
   if (requireAuth && ['true', 'false'].includes(requireAuth.toLowerCase())) {
     config.auth = {
-      ...(config.auth ?? defaultConfig.auth),
+      ...(config.auth ?? {}),
       requireAuth: requireAuth.toLowerCase() === 'true'
-    };
+    } as AppConfig['auth'];
   }
 
   const allowedTools = process.env.LOCAL_MCP_ALLOWED_TOOLS;
   if (allowedTools) {
     config.toolFilter = {
-      ...(config.toolFilter ?? defaultConfig.toolFilter),
+      ...(config.toolFilter ?? {}),
       allowedTools: allowedTools.split(',').map(t => t.trim()).filter(t => t)
-    };
+    } as AppConfig['toolFilter'];
   }
 
   const deniedTools = process.env.LOCAL_MCP_DENIED_TOOLS;
   if (deniedTools) {
     config.toolFilter = {
-      ...(config.toolFilter ?? defaultConfig.toolFilter),
+      ...(config.toolFilter ?? {}),
       deniedTools: deniedTools.split(',').map(t => t.trim()).filter(t => t)
-    };
+    } as AppConfig['toolFilter'];
   }
 
   return config;

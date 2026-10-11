@@ -114,7 +114,9 @@ How they are protected:
 - `security.allowedCommands` and `deniedCommands` are checked against the interpreter or package manager (`python3`, `npm`, ...). The default allowlist only contains `ls`, `cat`, `git`, `npm`, `node`, `echo`, so add what you want Claude to use. Treat this as a permission gate, not a sandbox: once code is approved, it runs with your user's privileges.
 - To switch any of these off, add the tool name to `toolFilter.deniedTools`.
 
-Example config enabling Python and a few package managers:
+Approval prompts appear in the terminal running Local-MCP and are answered there (`y`, `N`, `always`, `deny`). A `y` or `deny` answer is remembered for that exact action in `~/.local-mcp/approvals.json`, so delete the entry there to be asked again. If nobody answers within `security.approvalTimeoutMs` (default 60000 ms, `0` disables it; env `LOCAL_MCP_APPROVAL_TIMEOUT_MS`), the request is denied with an "approval timed out" message and nothing is saved, so you can simply retry. Prompts are shown one at a time, and answers typed within a fraction of a second of a prompt appearing are ignored, so text left over from an earlier prompt cannot approve a different request.
+
+Settings live in `~/.local-mcp/config.json` (or `./.local-mcp/config.json`, or `./local-mcp.config.json`; `node dist/cli.js init` writes a starter file), can be overridden with `LOCAL_MCP_*` environment variables, and command-line flags such as `--port` win over both. Example config enabling Python and a few package managers:
 
 ```json
 {

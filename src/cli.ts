@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { defaultConfig, loadConfig, writeDefaultConfig } from './config/config.js';
+import { loadConfig, writeDefaultConfig } from './config/config.js';
+import { buildStartConfig } from './config/startConfig.js';
 import { startLocalMcpTransport } from './mcp/server.js';
 import ApprovalStore from './security/store.js';
 import ConnectorsStore from './connectors/store.js';
@@ -20,14 +21,10 @@ program
 program
   .command('start')
   .description('Start the MCP server')
-  .option('--transport <transport>', 'Transport to run: stdio, sse, http', 'stdio')
+  .option('--transport <transport>', 'Transport to run: stdio, sse, http (default: from config, else stdio)')
   .option('--port <port>', 'Port for SSE/HTTP transport')
   .action(async (options) => {
-    const cfg = loadConfig({
-      ...defaultConfig,
-      transport: options.transport,
-      ...(options.port ? { port: Number.parseInt(options.port, 10) } : {})
-    });
+    const cfg = buildStartConfig(options);
     console.log(`Starting Local-MCP with ${cfg.transport} transport on port ${cfg.port}`);
     await startLocalMcpTransport(cfg);
   });

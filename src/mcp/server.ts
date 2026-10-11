@@ -872,7 +872,7 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
 }
 
 export async function startLocalMcpTransport(config: AppConfig = defaultConfig): Promise<void> {
-  if (config.transport === 'sse') {
+  if (config.transport === 'sse' || config.transport === 'http') {
     await createSseHttpServer(config);
     return;
   }

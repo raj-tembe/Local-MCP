@@ -92,6 +92,29 @@ cloudflared tunnel run --url http://localhost:8080 local-mcp
 Then use `https://mcp.yourdomain.com/mcp` as the connector URL — it won't
 change between restarts.
 
+Troubleshooting
+
+Tunnel keeps reconnecting ("failed to dial to edge with quic", "no recent
+network activity"). By default cloudflared talks to Cloudflare over QUIC
+(UDP), and some networks drop UDP intermittently. Requests then hang or fail
+while the tunnel reconnects. Use TCP instead:
+
+```bash
+node examples/expose-cloudflared/run-cloudflared.js --protocol http2
+# or
+cloudflared tunnel --protocol http2 --url http://localhost:8080
+```
+
+A restarted quick tunnel gets a new URL, so update the connector in Claude.
+
+Claude shows "Error occurred during tool execution" for tools that need
+approval (code.run, package.install, process.start, fs.write, ...). With
+`security.defaultMode` set to `ask`, Local-MCP waits for you to answer a
+prompt in the terminal where it is running. If nobody answers, the request
+now fails after `security.approvalTimeoutMs` (default 60 seconds) with a
+message saying the approval timed out. Keep that terminal visible while
+testing, or raise the timeout.
+
 Notes and caveats
 - Cloudflare terminates TLS for you; always use the `https://` URL in the
   Claude connector UI.
