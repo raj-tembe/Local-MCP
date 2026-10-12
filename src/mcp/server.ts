@@ -13,6 +13,7 @@ import { type AppConfig, defaultConfig } from '../config/config.js';
 import { SecurityEngine, createSessionId } from '../security/security.js';
 import { AuditLogger } from '../audit/audit.js';
 import { TerminalManager, isPtyAvailable } from '../terminal/manager.js';
+import { VERSION } from '../version.js';
 import ConnectorsStore from '../connectors/store.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { runProcess, clampTimeout, type RunResult } from '../exec/run.js';
@@ -137,7 +138,7 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
 
   const server = new McpServer({
     name: 'local-mcp',
-    version: '0.1.0'
+    version: VERSION
   }, { capabilities: { logging: {} } });
 
   server.registerTool('terminal.create', {
@@ -847,7 +848,7 @@ export async function createSseHttpServer(config: AppConfig = defaultConfig): Pr
     if (!accept.includes('text/event-stream') && !req.headers['mcp-session-id']) {
       res.json({
         name: 'local-mcp',
-        version: '0.1.0',
+        version: VERSION,
         protocolVersion: '2025-03-26',
         capabilities: { tools: {} },
         authentication: { required: config.auth.requireAuth }

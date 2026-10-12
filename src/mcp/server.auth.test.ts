@@ -1,3 +1,4 @@
+import { VERSION } from '../version.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
@@ -36,6 +37,7 @@ describe('SSE server authentication', () => {
     const response = await request(app2).get('/mcp').set('Accept', 'application/json');
     expect(response.status).toBe(200);
     expect(response.body.authentication.required).toBe(false);
+    expect(response.body.version).toBe(VERSION);
 
     server2.close();
   });

@@ -32,4 +32,4 @@ npm version 0.2.0          # updates package.json and creates the v0.2.0 tag
 git push --follow-tags
 ```
 
-The workflow checks that the tag matches `package.json`, runs the tests, builds and smoke-tests a standalone binary for each supported platform, and attaches the archives plus `SHA256SUMS.txt` to a GitHub Release (tags containing a `-`, such as `v0.2.0-rc.1`, are marked as pre-releases). Use "Run workflow" on the Actions page to build binaries without publishing a release.
+`npm version` also regenerates `src/version.ts` (the version reported to MCP clients and by `local-mcp --version`) and includes it in the release commit; a test fails if the two ever differ. The workflow checks that the tag matches `package.json`, runs the tests, builds and smoke-tests a standalone binary for each supported platform, and attaches the archives plus `SHA256SUMS.txt` to a GitHub Release (tags containing a `-`, such as `v0.2.0-rc.1`, are marked as pre-releases). Use "Run workflow" on the Actions page to build binaries without publishing a release.

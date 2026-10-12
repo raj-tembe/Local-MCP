@@ -5,9 +5,10 @@ import { buildStartConfig } from './config/startConfig.js';
 import { startLocalMcpTransport } from './mcp/server.js';
 import ApprovalStore from './security/store.js';
 import ConnectorsStore from './connectors/store.js';
+import { VERSION } from './version.js';
 
 const program = new Command();
-program.name('local-mcp').description('Secure local terminal bridge for cloud-based AI via MCP.');
+program.name('local-mcp').description('Secure local terminal bridge for cloud-based AI via MCP.').version(VERSION);
 
 program
   .command('init')

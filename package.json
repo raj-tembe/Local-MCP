@@ -31,7 +31,8 @@
     "lint": "eslint . --ext .ts",
     "prepublishOnly": "npm run build && npm test",
     "build:binary": "node scripts/build-binary.mjs",
-    "smoke:binary": "node scripts/smoke-binary.mjs"
+    "smoke:binary": "node scripts/smoke-binary.mjs",
+    "version": "node scripts/sync-version.mjs && git add src/version.ts"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -46,15 +47,9 @@
     "ai"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "@types/cors": "^2.8.19",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "commander": "^12.1.0",
-    "cors": "^2.8.6",
-    "dotenv": "^16.4.1",
     "express": "^5.2.1",
-    "jsonwebtoken": "^9.0.2",
-    "localtunnel": "^2.0.2",
-    "pino": "^9.0.0",
     "ws": "^8.0.0",
     "zod": "^3.25.0"
   },

@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -38,6 +39,10 @@ const env = { ...process.env, HOME: home, USERPROFILE: home };
 const help = spawnSync(binary, ['--help'], { encoding: 'utf8', env, timeout: 30_000 });
 check('--help runs and exits 0', help.status === 0 && /local-mcp/i.test(help.stdout), `${help.status} ${help.stderr}`);
 
+const expectedVersion = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version;
+const versionRun = spawnSync(binary, ['--version'], { encoding: 'utf8', env, timeout: 30_000 });
+check(`--version prints ${expectedVersion}`, versionRun.status === 0 && versionRun.stdout.trim() === expectedVersion, `${versionRun.status} ${versionRun.stdout} ${versionRun.stderr}`);
+
 const port = await freePort();
 const server = spawn(binary, ['start', '--transport', 'http', '--port', String(port)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
@@ -59,6 +64,8 @@ try {
   if (healthy) {
     const client = new Client({ name: 'smoke', version: '1.0.0' }, { capabilities: {} });
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
+
+    check(`MCP serverInfo reports ${expectedVersion}`, client.getServerVersion()?.version === expectedVersion, String(client.getServerVersion()?.version));
 
     const tools = (await client.listTools()).tools.map((t) => t.name);
     check('lists tools over MCP', tools.length >= 25 && tools.includes('code.run') && tools.includes('system.info'), `${tools.length} tools`);
