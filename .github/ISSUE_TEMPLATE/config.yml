@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/raj-tembe/Local-MCP/security/advisories/new
+    about: Please report vulnerabilities privately. Do not open a public issue.
+  - name: Read the documentation
+    url: https://github.com/raj-tembe/Local-MCP#readme
+    about: Setup, tunnels, authentication and tool configuration are covered in the README and the docs folder.

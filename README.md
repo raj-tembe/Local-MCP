@@ -252,6 +252,10 @@ The default policy is intentionally safe:
 - writes and shell operations require approval by default
 - audit logs are written to `~/.local-mcp/audit.jsonl`
 
+## Contributing
+
+Contributions are welcome, from bug reports and documentation fixes to new tools. Start with [CONTRIBUTING.md](CONTRIBUTING.md), which covers the development setup, the project layout and how to add a tool. Please read the [Code of Conduct](CODE_OF_CONDUCT.md) before taking part, use the [issue templates](https://github.com/raj-tembe/Local-MCP/issues/new/choose) to report bugs or suggest features, and report security vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 ## Project status
 
 This repository contains the initial scaffold and a working core config/security foundation for the Local-MCP package. The next stage is to expand the tool registry, transport support, and documentation for the full production feature set.

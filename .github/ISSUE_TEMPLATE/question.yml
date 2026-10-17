@@ -1,0 +1,29 @@
+name: Question or help
+description: Ask how to set something up or how Local-MCP behaves
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The [README](https://github.com/raj-tembe/Local-MCP#readme) and the `docs` folder cover setup, tunnels, authentication and tool configuration, so it is worth a quick look first.
+
+        Remove API keys, tokens, tunnel URLs and private paths from anything you paste.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Commands you ran, settings you changed, and what you saw.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version and operating system
+      placeholder: "0.2.1 on Ubuntu 24.04 x64"

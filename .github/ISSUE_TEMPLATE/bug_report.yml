@@ -1,0 +1,118 @@
+name: Bug report
+description: Something in Local-MCP is not working as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        Please search the [existing issues](https://github.com/raj-tembe/Local-MCP/issues?q=is%3Aissue) first. **Do not report security vulnerabilities here**: use the private process in the [security policy](https://github.com/raj-tembe/Local-MCP/security/policy).
+
+        Local-MCP gives an AI access to a real machine, so logs and configs can contain sensitive data. **Remove API keys, tokens, tunnel URLs, usernames and private file paths before pasting anything.**
+  - type: input
+    id: version
+    attributes:
+      label: Local-MCP version
+      description: Run `local-mcp --version` (or `node dist/cli.js --version` when running from source).
+      placeholder: "0.2.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How are you running it?
+      options:
+        - Standalone binary (GitHub Releases)
+        - From source (git clone and npm run build)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and CPU
+      placeholder: "Ubuntu 24.04 x64, macOS 15 arm64, Windows 11 x64"
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      description: The `--transport` option you started it with.
+      options:
+        - http or sse (remote, for example a Claude custom connector)
+        - stdio (local MCP client)
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: What is connected to it?
+      options:
+        - Claude custom connector (claude.ai)
+        - Claude Desktop
+        - Claude Code
+        - Another MCP client
+        - Nothing yet, the problem happens before connecting
+    validations:
+      required: true
+  - type: dropdown
+    id: tunnel
+    attributes:
+      label: Tunnel or proxy in front of it
+      options:
+        - Cloudflare Tunnel (cloudflared)
+        - ngrok
+        - Another tunnel or reverse proxy
+        - None (local only)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem. Include any error message Claude or Local-MCP showed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start Local-MCP with ...
+        2. In Claude, ask it to ...
+        3. See the error
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Terminal output from Local-MCP and, if relevant, from the tunnel. The audit log is `~/.local-mcp/audit.jsonl`. Redact secrets first.
+      render: shell
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: The parts of `~/.local-mcp/config.json` or the `LOCAL_MCP_*` environment variables that matter. Redact API keys and tokens.
+      render: json
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this has not been reported
+          required: true
+        - label: I removed secrets, tokens and private paths from everything I pasted
+          required: true
+        - label: This is not a security vulnerability (those go through the security policy)
+          required: true

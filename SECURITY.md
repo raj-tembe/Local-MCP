@@ -12,7 +12,9 @@ Local-MCP is designed with a default-deny posture. Any operation that touches th
 
 ## Reporting
 
-Please report vulnerabilities privately through the project maintainer or repository security reporting mechanism.
+Please report vulnerabilities privately. Do not open a public issue or pull request for a vulnerability.
+
+Use GitHub's private vulnerability reporting: open the repository's **Security** tab and choose **Report a vulnerability** ([direct link](https://github.com/raj-tembe/Local-MCP/security/advisories/new)). Include the affected version (`local-mcp --version`), steps to reproduce and the impact you see.
 
 ## Best practices
 
