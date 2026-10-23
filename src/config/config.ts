@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 export const securityConfigSchema = z.object({
   defaultMode: z.enum(['ask', 'allow', 'deny']).default('ask'),
-  allowedCommands: z.array(z.string()).default(['ls', 'cat', 'git', 'npm', 'node', 'echo']),
+  allowedCommands: z.array(z.string()).default(['ls', 'cat', 'git', 'npm', 'node', 'echo', 'bash', 'pnpm', 'python3', 'pip', 'docker', 'prettier', 'eslint', 'ruff', 'gofmt', 'golangci-lint', 'cargo', 'clippy-driver', 'make']),
   deniedCommands: z.array(z.string()).default(['rm', 'sudo', 'dd', 'mkfs', 'shutdown', 'reboot']),
   allowedPaths: z.array(z.string()).default(['~', '/tmp', '/var/tmp']),
   deniedPaths: z.array(z.string()).default(['/etc', '/root', '~/.ssh', '/proc', '/sys']),
@@ -43,6 +43,24 @@ export const cloudConfigSchema = z.object({
   token: z.string().default('')
 });
 
+export const httpConfigSchema = z.object({
+  allowPrivateNetworks: z.boolean().default(false)
+});
+
+export const lspConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  servers: z.record(z.string()).default({})
+});
+
+export const dbConfigSchema = z.object({
+  connections: z.record(z.object({
+    driver: z.enum(['sqlite', 'postgres', 'mysql']),
+    file: z.string().optional(),
+    env: z.string().optional(),
+    readOnly: z.boolean().default(true)
+  })).default({})
+});
+
 export const appConfigSchema = z.object({
   transport: z.enum(['stdio', 'sse', 'http']).default('stdio'),
   port: z.number().default(3000),
@@ -50,7 +68,10 @@ export const appConfigSchema = z.object({
   logging: loggingConfigSchema.default({}),
   cloud: cloudConfigSchema.default({}),
   auth: authConfigSchema.default({}),
-  toolFilter: toolFilterConfigSchema.default({})
+  toolFilter: toolFilterConfigSchema.default({}),
+  http: httpConfigSchema.default({}),
+  lsp: lspConfigSchema.default({}),
+  db: dbConfigSchema.default({})
 });
 
 export type SecurityConfig = z.infer<typeof securityConfigSchema>;
@@ -58,6 +79,9 @@ export type LoggingConfig = z.infer<typeof loggingConfigSchema>;
 export type CloudConfig = z.infer<typeof cloudConfigSchema>;
 export type AuthConfig = z.infer<typeof authConfigSchema>;
 export type ToolFilterConfig = z.infer<typeof toolFilterConfigSchema>;
+export type HttpConfig = z.infer<typeof httpConfigSchema>;
+export type LspConfig = z.infer<typeof lspConfigSchema>;
+export type DbConfig = z.infer<typeof dbConfigSchema>;
 export type AppConfig = z.infer<typeof appConfigSchema>;
 
 export const defaultConfig: AppConfig = {
@@ -65,7 +89,7 @@ export const defaultConfig: AppConfig = {
   port: 3000,
   security: {
     defaultMode: 'ask',
-    allowedCommands: ['ls', 'cat', 'git', 'npm', 'node', 'echo'],
+    allowedCommands: ['ls', 'cat', 'git', 'npm', 'node', 'echo', 'bash', 'pnpm', 'python3', 'pip', 'docker', 'prettier', 'eslint', 'ruff', 'gofmt', 'golangci-lint', 'cargo', 'clippy-driver', 'make'],
     deniedCommands: ['rm', 'sudo', 'dd', 'mkfs', 'shutdown', 'reboot'],
     allowedPaths: ['~', '/tmp', '/var/tmp'],
     deniedPaths: ['/etc', '/root', '~/.ssh', '/proc', '/sys'],
@@ -96,7 +120,18 @@ export const defaultConfig: AppConfig = {
   },
   toolFilter: {
     allowedTools: [],
-    deniedTools: ['shell.execute', 'terminal.write', 'fs.write', 'fs.mkdir', 'user.clipboard.write']
+    deniedTools: ['shell.execute', 'terminal.write', 'fs.write', 'fs.mkdir', 'user.clipboard.write',
+                  'repl.start', 'repl.eval', 'http.request', 'docker.exec', 'docker.compose', 'db.query', 'db.tables']
+  },
+  http: {
+    allowPrivateNetworks: false
+  },
+  lsp: {
+    enabled: false,
+    servers: {}
+  },
+  db: {
+    connections: {}
   }
 };
 

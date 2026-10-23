@@ -20,6 +20,12 @@ import { runProcess, clampTimeout, type RunResult } from '../exec/run.js';
 import { SUPPORTED_LANGUAGES, findExecutable, resolveLanguage, runCode } from '../exec/code.js';
 import { PACKAGE_MANAGERS, buildInstallPlan } from '../exec/packages.js';
 import { sharedProcessManager, summarize as summarizeProcess, installExitCleanup } from '../process/manager.js';
+import { runGrep, runGlob } from '../tools/search.js';
+import { runTree } from '../tools/fs.js';
+import { runGitStatus, runGitDiff, runGitLog, runGitShow, runGitBlame } from '../tools/git.js';
+import { runProjectDetect } from '../tools/project.js';
+import { runEnvList } from '../tools/env.js';
+import { runPortCheck } from '../tools/port.js';
 
 const execAsync = promisify(exec);
 
@@ -563,6 +569,267 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
   });
 
   // ---------------------------------------------------------------------------
+  // Phase 1: Read-only intelligence tools
+  // ---------------------------------------------------------------------------
+
+  server.registerTool('search.grep', {
+    description: 'Regex content search across a file tree. Returns matches with line numbers, context, and optional truncation.',
+    inputSchema: {
+      pattern: z.string().describe('Regex pattern to search for'),
+      path: z.string().optional().describe('Root directory to search (default: cwd)'),
+      glob: z.string().optional().describe('Glob pattern to filter files (e.g. **/*.ts)'),
+      caseSensitive: z.boolean().default(true).describe('Case-sensitive search'),
+      fixedStrings: z.boolean().default(false).describe('Treat pattern as literal string, not regex'),
+      contextLines: z.number().int().min(0).max(10).default(0).describe('Lines of context before/after each match'),
+      maxResults: z.number().int().positive().max(2000).default(200).describe('Maximum total matches to return'),
+      respectGitignore: z.boolean().default(true).describe('Respect .gitignore rules'),
+      includeIgnored: z.boolean().default(false).describe('Include normally ignored directories (node_modules, .git, etc.)'),
+      maxBytes: z.number().int().positive().default(256_000).describe('Output byte cap'),
+      cwd: z.string().optional().describe('Working directory for relative paths')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGrep(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'search.grep' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.glob', {
+    description: 'Find files matching a glob pattern. Returns POSIX-style relative paths.',
+    inputSchema: {
+      pattern: z.string().describe('Glob pattern (e.g. **/*.ts)'),
+      cwd: z.string().optional().describe('Working directory (default: server cwd)'),
+      ignore: z.array(z.string()).optional().describe('Additional ignore patterns'),
+      maxResults: z.number().int().positive().max(10000).default(1000).describe('Maximum results to return'),
+      includeDirs: z.boolean().default(false).describe('Include directories in results'),
+      respectGitignore: z.boolean().default(true).describe('Respect .gitignore rules')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGlob(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'fs.glob' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.tree', {
+    description: 'Render an ASCII tree of a directory. Dirs suffixed with /, truncated dirs show "… (N more)".',
+    inputSchema: {
+      path: z.string().optional().describe('Root directory (default: cwd)'),
+      depth: z.number().int().positive().max(10).default(3).describe('Maximum depth to traverse'),
+      includeFiles: z.boolean().default(true).describe('Include files in output'),
+      includeDirs: z.boolean().default(true).describe('Include directories in output'),
+      ignore: z.array(z.string()).optional().describe('Additional ignore patterns'),
+      respectGitignore: z.boolean().default(true).describe('Respect .gitignore rules'),
+      maxBytes: z.number().int().positive().default(256_000).describe('Output byte cap'),
+      cwd: z.string().optional().describe('Working directory for relative paths')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runTree(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'fs.tree' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.status', {
+    description: 'Get git repository status including branch, staged/unstaged changes, untracked files, and conflicts.',
+    inputSchema: {
+      cwd: z.string().optional().describe('Repository directory (default: cwd, walks up to find repo root)')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitStatus(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') {
+        return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO', message: 'Not a git repository' } };
+      }
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'git.status' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.diff', {
+    description: 'Show git diff. Can diff working tree, staged changes, or arbitrary refs. Supports stat-only mode.',
+    inputSchema: {
+      cwd: z.string().optional().describe('Repository directory'),
+      staged: z.boolean().default(false).describe('Diff staged changes instead of working tree'),
+      paths: z.array(z.string()).optional().describe('Limit to specific paths'),
+      contextLines: z.number().int().min(0).default(3).describe('Lines of context'),
+      from: z.string().optional().describe('Source ref (e.g. HEAD~1)'),
+      to: z.string().optional().describe('Target ref (e.g. HEAD)'),
+      statOnly: z.boolean().default(false).describe('Only show file stats, not full diff'),
+      maxBytes: z.number().int().positive().default(256_000).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitDiff(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') {
+        return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO', message: 'Not a git repository' } };
+      }
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'git.diff' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.log', {
+    description: 'Show git commit history with structured output. Supports filtering by path, author, date, and message.',
+    inputSchema: {
+      cwd: z.string().optional().describe('Repository directory'),
+      limit: z.number().int().positive().max(200).default(20).describe('Maximum commits to return'),
+      path: z.string().optional().describe('Limit to commits touching this path'),
+      author: z.string().optional().describe('Filter by author name/email'),
+      since: z.string().optional().describe('Filter commits after this date (ISO 8601)'),
+      grep: z.string().optional().describe('Filter by commit message regex')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitLog(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') {
+        return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO', message: 'Not a git repository' } };
+      }
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'git.log' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.show', {
+    description: 'Show a commit (metadata + patch) or a file at a specific revision.',
+    inputSchema: {
+      ref: z.string().describe('Commit ref (SHA, tag, branch, HEAD~1, etc.)'),
+      path: z.string().optional().describe('Optional file path to show at that revision'),
+      cwd: z.string().optional().describe('Repository directory'),
+      maxBytes: z.number().int().positive().default(256_000).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitShow(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') {
+        return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO', message: 'Not a git repository' } };
+      }
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'git.show' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.blame', {
+    description: 'Show line-by-line blame for a file. Returns author, date, and commit for each line.',
+    inputSchema: {
+      path: z.string().describe('File path (relative to repo root or absolute)'),
+      cwd: z.string().optional().describe('Repository directory'),
+      startLine: z.number().int().positive().optional().describe('Start line (1-indexed)'),
+      endLine: z.number().int().positive().optional().describe('End line (inclusive)'),
+      maxBytes: z.number().int().positive().default(256_000).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitBlame(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') {
+        return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO', message: 'Not a git repository' } };
+      }
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'git.blame' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('project.detect', {
+    description: 'Detect project type, languages, frameworks, package manager, scripts, and entry points from manifest files and file census.',
+    inputSchema: {
+      cwd: z.string().optional().describe('Project root directory (default: cwd)'),
+      depth: z.number().int().positive().max(10).default(3).describe('Directory depth to scan for manifests')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runProjectDetect(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'project.detect' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('env.list', {
+    description: 'List environment variables. Secrets (KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL, _PAT, AUTH) are always masked. Set revealValues=true to show non-secret values.',
+    inputSchema: {
+      filter: z.string().optional().describe('Glob or prefix filter for variable names'),
+      revealValues: z.boolean().default(false).describe('Show non-secret values (secrets are always masked)')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runEnvList(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'env.list' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('port.check', {
+    description: 'Check if a TCP port is listening. Returns listening state, bound addresses, and best-effort PID/process name.',
+    inputSchema: {
+      port: z.number().int().min(1).max(65535).describe('Port number to check'),
+      host: z.string().default('127.0.0.1').describe('Host to check (default: 127.0.0.1)')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runPortCheck(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') {
+        return denyResult(message, { tool: 'port.check' });
+      }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // Code execution, dependency installation and background processes
   // ---------------------------------------------------------------------------
 
@@ -579,7 +846,9 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
       ['node', ['--version']], ['npm', ['--version']], ['pnpm', ['--version']], ['yarn', ['--version']], ['bun', ['--version']],
       ['tsx', ['--version']], ['python3', ['--version']], ['pip3', ['--version']], ['uv', ['--version']],
       ['git', ['--version']], ['go', ['version']], ['cargo', ['--version']], ['rustc', ['--version']],
-      ['ruby', ['--version']], ['bash', ['--version']], ['docker', ['--version']]
+      ['ruby', ['--version']], ['bash', ['--version']], ['docker', ['--version']],
+      ['prettier', ['--version']], ['eslint', ['--version']], ['ruff', ['--version']], ['gofmt', ['-version']],
+      ['golangci-lint', ['--version']], ['clippy-driver', ['--version']], ['make', ['--version']]
     ];
     const entries = await Promise.all(probes.map(async ([file, args]) => {
       const location = findExecutable(file);

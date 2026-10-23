@@ -44,6 +44,7 @@ Tests that touch `~/.local-mcp` (approvals, audit log, config) should point `HOM
 | Path | What is in it |
 |------|---------------|
 | `src/mcp/server.ts` | The MCP server, tool registration and the HTTP transport |
+| `src/tools/` | Tool implementations (Phase 1: search, fs, git, project, env, port) |
 | `src/security/` | Permission checks, approval prompts and the stored approvals |
 | `src/config/` | Configuration schema, defaults, config files and environment variables |
 | `src/exec/` | Running code snippets and installing dependencies |
@@ -56,14 +57,24 @@ Tests that touch `~/.local-mcp` (approvals, audit log, config) should point `HOM
 
 Tests live next to the code they cover, in `*.test.ts` files.
 
+New tools should be placed in `src/tools/` (one file per namespace: `search.ts`, `fs.ts`, `git.ts`, `project.ts`, `env.ts`, `port.ts`) and imported in `server.ts`.
+
 ## Adding or changing a tool
 
-1. Register the tool in `src/mcp/server.ts` with `server.registerTool(name, { description, inputSchema }, handler)`. Describe every input with zod so MCP clients can see what is expected.
-2. Call `security.authorize('<tool name>', { ...details })` before doing anything with side effects, and return a denial result if it is not allowed. Put the command, path or other details in the call so allowlists and the approval prompt can see them.
-3. If the tool runs commands, changes files or opens network access, add it to the default `security.requireApproval` list in `src/config/config.ts`.
-4. Write to the audit log, and make sure secrets never reach it.
-5. Add tests. Both the allowed and the denied paths matter.
-6. Document it in the README or `docs/`.
+1. Create the tool implementation in `src/tools/<namespace>.ts` (e.g. `src/tools/search.ts` for `search.grep`, `fs.glob`). Export async functions that take `(config, security, audit, sessionId)` and return structured results.
+2. Register the tool in `src/mcp/server.ts` with `server.registerTool(name, { description, inputSchema }, handler)`. Describe every input with zod so MCP clients can see what is expected. Use the `namespace.verb` naming convention.
+3. Call `security.authorize('<tool name>', { ...details })` before doing anything with side effects, and return a denial result if not allowed. Put the command, path, or other details in the call so allowlists and the approval prompt can see them.
+4. If the tool runs commands, changes files, or opens network access, add it to the default `security.requireApproval` list in `src/config/config.ts`. Phase 1 read-only tools do not need approval.
+5. Write to the audit log via `audit.log({ timestamp, sessionId, tool, decision, result })`. Never log file contents, env values, request bodies, SQL parameters, or clipboard contents — log hashes and byte counts only.
+6. Respect output caps: support `maxBytes` parameter (default 256 KB), truncate at safe boundaries (line/record), set `truncated: true` when capped.
+7. Use `runProcess` from `src/exec/run.ts` for spawning — it handles timeout, output capping, and process-tree kill.
+8. Expand `~` in paths using `expandPath` helper; accept `cwd` for relative resolution.
+9. For search/list/tree tools: respect `.gitignore` by default, expose `respectGitignore?: boolean` (default `true`).
+10. For tools that could write: accept `dryRun?: boolean` (default `false`) and return the diff it would apply.
+11. Return structured JSON results (objects, not raw strings). Human-readable text goes in a `text`/`diff`/`stdout` field inside the object.
+12. Errors: return `{ error: { code, message, detail? } }` with stable codes (`ENOENT`, `EACCES`, `NOT_A_REPO`, `TIMEOUT`, `UNAVAILABLE`, `REJECTED_BY_POLICY`, `APPROVAL_DENIED`, `APPROVAL_TIMEOUT`). Do not throw across the MCP boundary.
+13. Add tests: happy path, error paths (`ENOENT`, `NOT_A_REPO`, `UNAVAILABLE`, `REJECTED_BY_POLICY`), truncation test, policy test (denied tool, approval-gated tool with hash-scoped approval).
+14. Document it in `tools.md` and update the README tools table.
 
 ## Code quality
 

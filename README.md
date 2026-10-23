@@ -104,7 +104,7 @@ Restrict which tools Claude can access:
 
 ```bash
 # Allow only read-only tools
-export LOCAL_MCP_ALLOWED_TOOLS="fs.read,fs.list,fs.stat,system.info,terminal.read,terminal.list"
+export LOCAL_MCP_ALLOWED_TOOLS="fs.read,fs.list,fs.stat,system.info,terminal.read,terminal.list,search.grep,fs.glob,fs.tree,git.status,git.diff,git.log,git.show,git.blame,project.detect,env.list,port.check"
 node dist/cli.js start --transport sse --port 3000
 ```
 
@@ -112,13 +112,13 @@ Or in config:
 ```json
 {
   "toolFilter": {
-    "allowedTools": ["fs.read", "fs.list", "fs.stat", "system.info"],
-    "deniedTools": ["shell.execute", "fs.write", "fs.mkdir", "terminal.write"]
+    "allowedTools": ["fs.read", "fs.list", "fs.stat", "system.info", "search.grep", "fs.glob", "fs.tree", "git.status", "git.diff", "git.log", "git.show", "git.blame", "project.detect", "env.list", "port.check"],
+    "deniedTools": ["shell.execute", "fs.write", "fs.mkdir", "terminal.write", "user.clipboard.write"]
   }
 }
 ```
 
-**Default denied tools**: `shell.execute`, `terminal.write`, `fs.write`, `fs.mkdir`, `user.clipboard.write`
+**Default denied tools**: `shell.execute`, `terminal.write`, `fs.write`, `fs.mkdir`, `user.clipboard.write`, `repl.start`, `repl.eval`, `http.request`, `docker.exec`, `docker.compose`, `db.query`, `db.tables`
 
 ### Running Code, Installing Dependencies, Background Processes
 
@@ -206,6 +206,28 @@ local-mcp connectors:remove my-server
 3. **Monitor audit logs** at `~/.local-mcp/audit.jsonl`
 4. **Use approval mode** (default) for interactive confirmation
 5. **Remove test connectors** when done
+
+---
+
+## Phase 1 — Read-only Intelligence Tools
+
+These tools provide read-only access to code intelligence, git history, project structure, and system information. They do not modify files or execute code, and do not require approval by default.
+
+| Tool | Description |
+|------|-------------|
+| `search.grep` | Regex content search across a file tree with context lines, gitignore support, binary file detection. |
+| `fs.glob` | Find files matching a glob pattern, returns POSIX-style paths. |
+| `fs.tree` | Render ASCII directory tree with depth control, shows `… (N more)` for truncated dirs. |
+| `git.status` | Repository status: branch, upstream, ahead/behind, staged/unstaged/untracked/conflicts. |
+| `git.diff` | Diff working tree, staged changes, or arbitrary refs. Supports `statOnly` mode. |
+| `git.log` | Structured commit history with filtering by path, author, date, message. |
+| `git.show` | Show commit metadata + patch, or file content at a specific revision. |
+| `git.blame` | Line-by-line blame with author, date, and commit SHA. |
+| `project.detect` | Detect languages, frameworks, package manager, scripts, entry points from manifests and file census. |
+| `env.list` | List environment variables. Secrets (KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL, _PAT, AUTH) are always masked. |
+| `port.check` | Check if TCP port is listening, with best-effort PID/process name lookup. |
+
+All Phase 1 tools respect `.gitignore` by default (override with `respectGitignore: false`), support `maxBytes` output cap (default 256 KB), and return structured JSON with `truncated` flag.
 
 ---
 
@@ -317,22 +339,22 @@ You ask the AI:
 
 The AI could perform the following workflow:
 
-1. Inspect project
-       ↓
-2. Read package.json
-       ↓
-3. Run npm test
-       ↓
+1. Inspect project (`project.detect`, `git.status`, `fs.tree`)
+        ↓
+2. Read package.json (`fs.read`)
+        ↓
+3. Run npm test (`process.start` + `process.logs` or `code.run`)
+        ↓
 4. Receive test output
-       ↓
-5. Analyze failure
-       ↓
-6. Read relevant source files
-       ↓
-7. Modify code
-       ↓
+        ↓
+5. Analyze failure (`search.grep` for error patterns, `git.diff` for recent changes)
+        ↓
+6. Read relevant source files (`fs.read`, `fs.glob`)
+        ↓
+7. Modify code (`fs.edit` — Phase 2, approval required)
+        ↓
 8. Run tests again
-       ↓
+        ↓
 9. Verify result
 
 All commands are executed on the user's local machine through Local-MCP.
@@ -351,15 +373,45 @@ Tool| Purpose
 "fs.write"| Write a file
 "fs.list"| List files
 "fs.mkdir"| Create a directory
+"fs.stat"| Get file metadata
+"fs.search"| Search files by name or content
+"fs.glob"| Find files matching a glob pattern
+"fs.tree"| Render ASCII directory tree
+"search.grep"| Regex content search across files
+"git.status"| Git repository status
+"git.diff"| Git diff (working tree, staged, or refs)
+"git.log"| Git commit history
+"git.show"| Show commit or file at revision
+"git.blame"| Line-by-line git blame
+"project.detect"| Detect project type, languages, frameworks
+"env.list"| List environment variables (secrets masked)
+"port.check"| Check if TCP port is listening
 "process.list"| List background processes started with process.start
+"process.logs"| Read background process output
+"process.stop"| Stop a background process
 "user.input"| Request input from the user
 "user.confirm"| Request confirmation
+"user.notify"| Send desktop notification
+"user.clipboard.read"| Read system clipboard
+"user.clipboard.write"| Write to system clipboard
+"user.open_url"| Open URL in browser
+"user.stdout.write"| Write to stdout
+"user.stderr.write"| Write to stderr
 "code.run"| Run a code snippet (python, javascript, typescript, bash, ruby, go)
 "package.install"| Install dependencies (npm, pnpm, yarn, bun, pip, uv, cargo, go)
 "runtime.detect"| Detect installed runtimes and package managers
 "process.start"| Start a background process
-"process.logs"| Read background process output
-"process.stop"| Stop a background process
+"connectors.list"| List custom MCP connectors
+"connectors.add"| Add custom MCP connector
+"connectors.remove"| Remove custom MCP connector
+"system.info"| Get system information
+"shell.execute"| Execute shell command (approval required)
+"terminal.create"| Create PTY session
+"terminal.write"| Write to PTY session
+"terminal.resize"| Resize PTY session
+"terminal.kill"| Kill PTY session
+"terminal.read"| Read PTY output
+"terminal.list"| List PTY sessions
 
 The available tools may vary depending on the configuration.
 
