@@ -26,6 +26,10 @@ import { runGitStatus, runGitDiff, runGitLog, runGitShow, runGitBlame } from '..
 import { runProjectDetect } from '../tools/project.js';
 import { runEnvList } from '../tools/env.js';
 import { runPortCheck } from '../tools/port.js';
+import { runFSEdit, runFSApplyPatch, runFSDiff, runFSMove, runFSCopy, runFSRemove } from '../tools/fs-write.js';
+import { runGitAdd, runGitCommit, runGitStash, runGitCheckout, runGitBranch } from '../tools/git-write.js';
+import { runTaskRun } from '../tools/task.js';
+import { runCodeFormat, runCodeLint } from '../tools/code-quality.js';
 
 const execAsync = promisify(exec);
 
@@ -825,6 +829,307 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
       if (message === 'Permission denied') {
         return denyResult(message, { tool: 'port.check' });
       }
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 2: Mutation tools (approval-gated)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool('fs.edit', {
+    description: 'Edit a file by replacing oldString with newString. Requires oldString to be unique unless replaceAll is set. Returns unified diff.',
+    inputSchema: {
+      path: z.string().describe('File path'),
+      oldString: z.string().describe('Text to replace (must be unique in file unless replaceAll=true)'),
+      newString: z.string().describe('Replacement text'),
+      replaceAll: z.boolean().default(false).describe('Replace all occurrences'),
+      expectedReplacements: z.number().int().positive().optional().describe('Expected number of replacements (fails if mismatch)'),
+      dryRun: z.boolean().default(false).describe('Preview only, no write'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap'),
+      cwd: z.string().optional().describe('Working directory for relative paths')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFSEdit(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.edit' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.applyPatch', {
+    description: 'Apply a unified diff patch. Validates paths before writing. Atomic per-file with temp file + rename.',
+    inputSchema: {
+      patch: z.string().describe('Unified diff patch'),
+      cwd: z.string().optional().describe('Working directory'),
+      strip: z.number().int().positive().default(1).describe('Strip leading path components'),
+      dryRun: z.boolean().default(false).describe('Preview only, no write'),
+      reverse: z.boolean().default(false).describe('Apply patch in reverse'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFSApplyPatch(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.applyPatch' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.diff', {
+    description: 'Generate a unified diff between two file versions. Pure preview, never writes.',
+    inputSchema: {
+      path: z.string().optional().describe('File path (with oldContent+newContent)'),
+      oldContent: z.string().optional().describe('Original content'),
+      newContent: z.string().optional().describe('New content'),
+      pathA: z.string().optional().describe('First file path (with pathB)'),
+      pathB: z.string().optional().describe('Second file path (with pathA)'),
+      contextLines: z.number().int().min(0).default(3).describe('Lines of context'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap'),
+      cwd: z.string().optional().describe('Working directory for relative paths')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFSDiff(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.diff' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.move', {
+    description: 'Move or rename a file or directory. Fails with EEXIST unless overwrite=true.',
+    inputSchema: {
+      from: z.string().describe('Source path'),
+      to: z.string().describe('Destination path'),
+      overwrite: z.boolean().default(false).describe('Overwrite destination if exists'),
+      dryRun: z.boolean().default(false).describe('Preview only, no write'),
+      cwd: z.string().optional().describe('Working directory for relative paths')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFSMove(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.move' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.copy', {
+    description: 'Copy a file or directory. Supports recursive copy. Fails with EEXIST unless overwrite=true.',
+    inputSchema: {
+      from: z.string().describe('Source path'),
+      to: z.string().describe('Destination path'),
+      recursive: z.boolean().default(false).describe('Copy directories recursively'),
+      overwrite: z.boolean().default(false).describe('Overwrite destination if exists'),
+      dryRun: z.boolean().default(false).describe('Preview only, no write'),
+      cwd: z.string().optional().describe('Working directory for relative paths')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFSCopy(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.copy' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.remove', {
+    description: 'Remove a file or directory. Defaults to OS trash (recycle bin on Windows, ~/.Trash on macOS, XDG on Linux). Use useTrash:false for permanent deletion. Refuses unsafe paths (home, root, git repo root).',
+    inputSchema: {
+      path: z.string().describe('Path to remove'),
+      recursive: z.boolean().default(false).describe('Remove directories recursively'),
+      useTrash: z.boolean().default(true).describe('Use OS trash instead of permanent deletion'),
+      dryRun: z.boolean().default(false).describe('Preview only, no write'),
+      cwd: z.string().optional().describe('Working directory for relative paths')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFSRemove(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.remove' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.add', {
+    description: 'Stage files for commit.',
+    inputSchema: {
+      paths: z.array(z.string()).describe('Paths to stage'),
+      cwd: z.string().optional().describe('Repository directory'),
+      dryRun: z.boolean().default(false).describe('Preview only')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitAdd(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO' } };
+      if (message === 'Permission denied') return denyResult(message, { tool: 'git.add' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.commit', {
+    description: 'Create a commit with staged changes. Refuses empty staged set.',
+    inputSchema: {
+      message: z.string().describe('Commit message'),
+      paths: z.array(z.string()).optional().describe('Specific paths to commit (implies add)'),
+      cwd: z.string().optional().describe('Repository directory'),
+      amend: z.boolean().default(false).describe('Amend previous commit'),
+      signoff: z.boolean().default(false).describe('Add Signed-off-by trailer'),
+      dryRun: z.boolean().default(false).describe('Preview only')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitCommit(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO' } };
+      if (message === 'NOTHING_TO_COMMIT') return { content: [textContent('Nothing to commit')], isError: true, structuredContent: { error: 'NOTHING_TO_COMMIT' } };
+      if (message === 'Permission denied') return denyResult(message, { tool: 'git.commit' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.stash', {
+    description: 'Stash operations: push, pop, list, drop, apply.',
+    inputSchema: {
+      action: z.enum(['push', 'pop', 'list', 'drop', 'apply']).describe('Stash action'),
+      message: z.string().optional().describe('Stash message (for push)'),
+      index: z.number().int().optional().describe('Stash index (for pop/drop/apply)'),
+      includeUntracked: z.boolean().default(false).describe('Include untracked files (for push)'),
+      cwd: z.string().optional().describe('Repository directory')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitStash(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO' } };
+      if (message === 'Permission denied') return denyResult(message, { tool: 'git.stash' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.checkout', {
+    description: 'Switch branches or restore files. force:true requires second confirmation for discarding local changes.',
+    inputSchema: {
+      target: z.string().describe('Branch, tag, or commit to checkout'),
+      create: z.boolean().default(false).describe('Create new branch'),
+      paths: z.array(z.string()).optional().describe('Specific paths to restore'),
+      force: z.boolean().default(false).describe('Discard local changes (requires second confirmation)'),
+      cwd: z.string().optional().describe('Repository directory'),
+      dryRun: z.boolean().default(false).describe('Preview only')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitCheckout(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO' } };
+      if (message === 'Permission denied') return denyResult(message, { tool: 'git.checkout' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('git.branch', {
+    description: 'List, create, delete, or rename branches.',
+    inputSchema: {
+      action: z.enum(['list', 'create', 'delete', 'rename']).describe('Branch action'),
+      name: z.string().optional().describe('Branch name (for create/delete/rename)'),
+      from: z.string().optional().describe('Source branch (for create/rename)'),
+      force: z.boolean().default(false).describe('Force delete/rename'),
+      cwd: z.string().optional().describe('Repository directory')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runGitBranch(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'NOT_A_REPO') return { content: [textContent('Not a git repository')], isError: true, structuredContent: { error: 'NOT_A_REPO' } };
+      if (message === 'Permission denied') return denyResult(message, { tool: 'git.branch' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('task.run', {
+    description: 'Run a script from package.json, Makefile, justfile, pyproject.toml, or Cargo.toml. Returns structured test summary for vitest/jest/pytest/cargo test/go test.',
+    inputSchema: {
+      script: z.string().describe('Script name (e.g. test, build, lint)'),
+      cwd: z.string().optional().describe('Project directory'),
+      args: z.array(z.string()).optional().describe('Additional arguments passed to the script'),
+      timeoutMs: z.number().int().positive().max(600000).default(120000).describe('Timeout in ms (default 120s, max 600s)'),
+      env: z.record(z.string()).optional().describe('Additional environment variables'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runTaskRun(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'task.run' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('code.format', {
+    description: 'Format code with prettier, black, ruff, gofmt, or rustfmt. Auto-detects from config files. check=true reports instead of writing.',
+    inputSchema: {
+      paths: z.array(z.string()).optional().describe('Files or directories to format (default: project root)'),
+      cwd: z.string().optional().describe('Working directory'),
+      formatter: z.enum(['prettier', 'black', 'ruff', 'gofmt', 'rustfmt', 'auto']).default('auto').describe('Formatter to use'),
+      check: z.boolean().default(false).describe('Report only, do not write'),
+      dryRun: z.boolean().default(false).describe('Preview only'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runCodeFormat(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'code.format' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('code.lint', {
+    description: 'Lint code with eslint, ruff, golangci-lint, or clippy. Auto-detects from config files. fix=true applies fixes.',
+    inputSchema: {
+      paths: z.array(z.string()).optional().describe('Files or directories to lint (default: project root)'),
+      cwd: z.string().optional().describe('Working directory'),
+      linter: z.enum(['eslint', 'ruff', 'golangci-lint', 'clippy', 'auto']).default('auto').describe('Linter to use'),
+      fix: z.boolean().default(false).describe('Apply fixes (requires approval)'),
+      dryRun: z.boolean().default(false).describe('Preview only'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runCodeLint(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'code.lint' });
       return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
     }
   });

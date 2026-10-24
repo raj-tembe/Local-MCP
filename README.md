@@ -231,6 +231,31 @@ All Phase 1 tools respect `.gitignore` by default (override with `respectGitigno
 
 ---
 
+## Phase 2 — Mutation Tools (Approval-Gated)
+
+These tools modify files or git state and require approval by default. Approval is scoped to the exact payload hash. Use `dryRun: true` to preview without approval.
+
+| Tool | Description |
+|------|-------------|
+| `fs.edit` | Edit a file by replacing oldString with newString. Returns unified diff. Errors: AMBIGUOUS_MATCH, EXPECTED_MISMATCH. |
+| `fs.applyPatch` | Apply a unified diff patch. Validates paths, atomic per-file. Reports rejected hunks. |
+| `fs.diff` | Generate unified diff between two versions. Pure preview, never writes. |
+| `fs.move` | Move/rename file or directory. Fails with EEXIST unless overwrite. |
+| `fs.copy` | Copy file or directory. Supports recursive. Fails with EEXIST unless overwrite. |
+| `fs.remove` | Remove file/directory. Defaults to OS trash. Refuses unsafe paths (home, root, git repo). |
+| `git.add` | Stage files for commit. |
+| `git.commit` | Create commit with staged changes. Refuses empty staged set. Hooks run normally. |
+| `git.stash` | Stash operations: push, pop, list, drop, apply. |
+| `git.checkout` | Switch branches or restore files. force:true needs second confirmation. |
+| `git.branch` | List, create, delete, rename branches. |
+| `task.run` | Run script from package.json/Makefile/justfile/pyproject.toml/Cargo.toml. Returns structured test summary for vitest/jest/pytest/cargo/go test. **Highest-value Phase 2 tool.** |
+| `code.format` | Format with prettier/black/ruff/gofmt/rustfmt. Auto-detects. check=true reports only. |
+| `code.lint` | Lint with eslint/ruff/golangci-lint/clippy. Auto-detects. fix=true applies fixes. |
+
+All Phase 2 tools: in `security.requireApproval` by default, support `dryRun` (no approval), `maxBytes` cap (256 KB default), return structured JSON with `truncated` flag.
+
+---
+
 ## Add custom connector (Legacy)
 
 Add custom connectors (Claude)
@@ -377,15 +402,29 @@ Tool| Purpose
 "fs.search"| Search files by name or content
 "fs.glob"| Find files matching a glob pattern
 "fs.tree"| Render ASCII directory tree
+"fs.edit"| Edit file (replace oldString with newString)
+"fs.applyPatch"| Apply unified diff patch
+"fs.diff"| Generate diff preview
+"fs.move"| Move/rename file or directory
+"fs.copy"| Copy file or directory
+"fs.remove"| Remove file/directory (trash by default)
 "search.grep"| Regex content search across files
 "git.status"| Git repository status
 "git.diff"| Git diff (working tree, staged, or refs)
 "git.log"| Git commit history
 "git.show"| Show commit or file at revision
 "git.blame"| Line-by-line git blame
+"git.add"| Stage files for commit
+"git.commit"| Create commit
+"git.stash"| Stash operations
+"git.checkout"| Switch branches or restore files
+"git.branch"| List, create, delete, rename branches
 "project.detect"| Detect project type, languages, frameworks
 "env.list"| List environment variables (secrets masked)
 "port.check"| Check if TCP port is listening
+"task.run"| Run package.json/Makefile/justfile script
+"code.format"| Format code (prettier, black, ruff, gofmt, rustfmt)
+"code.lint"| Lint code (eslint, ruff, golangci-lint, clippy)
 "process.list"| List background processes started with process.start
 "process.logs"| Read background process output
 "process.stop"| Stop a background process

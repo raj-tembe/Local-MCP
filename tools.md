@@ -443,9 +443,448 @@ Check if a TCP port is listening.
 
 ## Phase 2 — Mutation Tools (Approval-Gated)
 
-These tools modify files or git state and require approval by default.
+These tools modify files or git state and require approval by default. Approval is scoped to the exact payload hash. Use `dryRun: true` to preview without approval.
 
-*Coming in Phase 2: `fs.edit`, `fs.applyPatch`, `fs.diff`, `fs.move`, `fs.copy`, `fs.remove`, `git.add`, `git.commit`, `git.stash`, `git.checkout`, `git.branch`, `task.run`, `code.format`, `code.lint`*
+---
+
+### fs.edit
+
+Edit a file by replacing `oldString` with `newString`. Requires `oldString` to be unique unless `replaceAll` is set. Returns unified diff.
+
+**Input:**
+```json
+{
+  "path": "string (required) - File path",
+  "oldString": "string (required) - Text to replace (must be unique unless replaceAll=true)",
+  "newString": "string (required) - Replacement text",
+  "replaceAll": "boolean (default: false) - Replace all occurrences",
+  "expectedReplacements": "number (optional) - Expected count (fails if mismatch)",
+  "dryRun": "boolean (default: false) - Preview only, no write",
+  "maxBytes": "number (default: 262144) - Output byte cap",
+  "cwd": "string (optional) - Working directory for relative paths"
+}
+```
+
+**Output:**
+```json
+{
+  "applied": "boolean - Whether write occurred (false if dryRun)",
+  "replacements": "number - Number of replacements made",
+  "diff": "string - Unified diff of the change",
+  "diffTruncated": "boolean",
+  "error": "{ code, message, detail? } - If failed"
+}
+```
+
+**Error codes:** `ENOENT`, `NOT_FOUND`, `AMBIGUOUS_MATCH`, `EXPECTED_MISMATCH`
+
+**Example:**
+```json
+{
+  "path": "src/main.ts",
+  "oldString": "const x = 1;",
+  "newString": "const x = 2;",
+  "dryRun": true
+}
+```
+
+---
+
+### fs.applyPatch
+
+Apply a unified diff patch. Validates paths before writing (rejects path traversal). Atomic per-file with temp file + rename.
+
+**Input:**
+```json
+{
+  "patch": "string (required) - Unified diff patch",
+  "cwd": "string (optional) - Working directory",
+  "strip": "number (default: 1) - Strip leading path components",
+  "dryRun": "boolean (default: false) - Preview only",
+  "reverse": "boolean (default: false) - Apply in reverse",
+  "maxBytes": "number (default: 262144) - Output byte cap"
+}
+```
+
+**Output:**
+```json
+{
+  "applied": "boolean - True if all hunks applied",
+  "files": [{ "path": "string", "status": "string", "additions": "number", "deletions": "number" }],
+  "rejected": [{ "path": "string", "reason": "string" }],
+  "diff": "string - Applied diff"
+}
+```
+
+**Example:**
+```json
+{
+  "patch": "@@ -1,3 +1,3 @@\n line1\n-line2\n+line2 modified\n line3\n",
+  "strip": 1
+}
+```
+
+---
+
+### fs.diff
+
+Generate a unified diff between two file versions. Pure preview, never writes.
+
+**Input:**
+```json
+{
+  "path": "string (optional) - File path (with oldContent+newContent)",
+  "oldContent": "string (optional) - Original content",
+  "newContent": "string (optional) - New content",
+  "pathA": "string (optional) - First file path (with pathB)",
+  "pathB": "string (optional) - Second file path (with pathA)",
+  "contextLines": "number (default: 3) - Lines of context",
+  "maxBytes": "number (default: 262144) - Output byte cap",
+  "cwd": "string (optional) - Working directory for relative paths"
+}
+```
+
+**Output:**
+```json
+{
+  "diff": "string - Unified diff",
+  "additions": "number",
+  "deletions": "number",
+  "truncated": "boolean"
+}
+```
+
+**Example:**
+```json
+{ "pathA": "src/old.ts", "pathB": "src/new.ts" }
+```
+
+---
+
+### fs.move
+
+Move or rename a file or directory. Fails with `EEXIST` unless `overwrite=true`.
+
+**Input:**
+```json
+{
+  "from": "string (required) - Source path",
+  "to": "string (required) - Destination path",
+  "overwrite": "boolean (default: false) - Overwrite if exists",
+  "dryRun": "boolean (default: false) - Preview only",
+  "cwd": "string (optional) - Working directory for relative paths"
+}
+```
+
+**Output:**
+```json
+{ "moved": "boolean", "from": "string", "to": "string" }
+```
+
+---
+
+### fs.copy
+
+Copy a file or directory. Supports recursive copy. Fails with `EEXIST` unless `overwrite=true`.
+
+**Input:**
+```json
+{
+  "from": "string (required) - Source path",
+  "to": "string (required) - Destination path",
+  "recursive": "boolean (default: false) - Copy directories recursively",
+  "overwrite": "boolean (default: false) - Overwrite if exists",
+  "dryRun": "boolean (default: false) - Preview only",
+  "cwd": "string (optional) - Working directory for relative paths"
+}
+```
+
+**Output:**
+```json
+{ "copied": "boolean", "from": "string", "to": "string", "entries": "number" }
+```
+
+---
+
+### fs.remove
+
+Remove a file or directory. Defaults to OS trash (recycle bin on Windows, `~/.Trash` on macOS, XDG on Linux). Use `useTrash:false` for permanent deletion. Refuses unsafe paths (home, root, git repo root).
+
+**Input:**
+```json
+{
+  "path": "string (required) - Path to remove",
+  "recursive": "boolean (default: false) - Remove directories recursively",
+  "useTrash": "boolean (default: true) - Use OS trash instead of permanent deletion",
+  "dryRun": "boolean (default: false) - Preview only",
+  "cwd": "string (optional) - Working directory for relative paths"
+}
+```
+
+**Output:**
+```json
+{ "removed": "boolean", "path": "string", "method": "\"trash\" | \"delete\"" }
+```
+
+**Error code:** `REFUSED_UNSAFE_PATH` for protected paths
+
+---
+
+### git.add
+
+Stage files for commit.
+
+**Input:**
+```json
+{
+  "paths": "string[] (required) - Paths to stage",
+  "cwd": "string (optional) - Repository directory",
+  "dryRun": "boolean (default: false) - Preview only"
+}
+```
+
+**Output:**
+```json
+{ "staged": "string[]", "dryRun": "boolean" }
+```
+
+---
+
+### git.commit
+
+Create a commit with staged changes. Refuses empty staged set (`NOTHING_TO_COMMIT`). Does not use `--no-verify` — hooks run normally.
+
+**Input:**
+```json
+{
+  "message": "string (required) - Commit message",
+  "paths": "string[] (optional) - Specific paths to commit (implies add)",
+  "cwd": "string (optional) - Repository directory",
+  "amend": "boolean (default: false) - Amend previous commit",
+  "signoff": "boolean (default: false) - Add Signed-off-by trailer",
+  "dryRun": "boolean (default: false) - Preview only"
+}
+```
+
+**Output:**
+```json
+{
+  "sha": "string - Full commit SHA",
+  "shortSha": "string - Abbreviated SHA",
+  "message": "string",
+  "filesChanged": "number"
+}
+```
+
+---
+
+### git.stash
+
+Stash operations: push, pop, list, drop, apply.
+
+**Input:**
+```json
+{
+  "action": "string (required) - push | pop | list | drop | apply",
+  "message": "string (optional) - Stash message (for push)",
+  "index": "number (optional) - Stash index (for pop/drop/apply)",
+  "includeUntracked": "boolean (default: false) - Include untracked files (for push)",
+  "cwd": "string (optional) - Repository directory"
+}
+```
+
+**Output (list):**
+```json
+{
+  "action": "list",
+  "ok": "boolean",
+  "stashes": [{ "index": "number", "message": "string", "sha": "string" }]
+}
+```
+
+**Output (other):**
+```json
+{ "action": "string", "ok": "boolean", "detail": "string" }
+```
+
+---
+
+### git.checkout
+
+Switch branches or restore files. `force:true` requires second confirmation for discarding local changes.
+
+**Input:**
+```json
+{
+  "target": "string (required) - Branch, tag, or commit",
+  "create": "boolean (default: false) - Create new branch",
+  "paths": "string[] (optional) - Specific paths to restore",
+  "force": "boolean (default: false) - Discard local changes (needs second confirmation)",
+  "cwd": "string (optional) - Repository directory",
+  "dryRun": "boolean (default: false) - Preview only"
+}
+```
+
+**Output:**
+```json
+{
+  "branch": "string|null",
+  "sha": "string|null",
+  "detached": "boolean",
+  "previousRef": "string",
+  "switchedFiles": "string[]"
+}
+```
+
+---
+
+### git.branch
+
+List, create, delete, or rename branches.
+
+**Input:**
+```json
+{
+  "action": "string (required) - list | create | delete | rename",
+  "name": "string (optional) - Branch name (for create/delete/rename)",
+  "from": "string (optional) - Source branch (for create/rename)",
+  "force": "boolean (default: false) - Force delete/rename",
+  "cwd": "string (optional) - Repository directory"
+}
+```
+
+**Output (list):**
+```json
+{
+  "branches": [
+    { "name": "string", "current": "boolean", "sha": "string", "upstream": "string|null" }
+  ]
+}
+```
+
+**Output (other):**
+```json
+{ "action": "string", "ok": "boolean" }
+```
+
+---
+
+### task.run
+
+Run a script from `package.json`, `Makefile`, `justfile`, `pyproject.toml`, or `Cargo.toml`. Returns structured test summary for vitest/jest/pytest/cargo test/go test. **Highest-value tool in Phase 2.**
+
+**Input:**
+```json
+{
+  "script": "string (required) - Script name (e.g. test, build, lint)",
+  "cwd": "string (optional) - Project directory",
+  "args": "string[] (optional) - Additional arguments to the script",
+  "timeoutMs": "number (default: 120000, max: 600000) - Timeout in ms",
+  "env": "Record<string,string> (optional) - Additional environment variables",
+  "maxBytes": "number (default: 262144) - Output byte cap"
+}
+```
+
+**Output:**
+```json
+{
+  "script": "string",
+  "command": "string - Full command executed",
+  "exitCode": "number|null",
+  "status": "\"passed\" | \"failed\" | \"timeout\" | \"error\"",
+  "durationMs": "number",
+  "framework": "string|null - Detected test framework",
+  "summary": {
+    "total": "number",
+    "passed": "number",
+    "failed": "number",
+    "skipped": "number",
+    "failingTests": [{ "name": "string", "file": "string?", "line": "number?", "message": "string" }]
+  },
+  "stdout": "string",
+  "stderr": "string",
+  "truncated": "boolean"
+}
+```
+
+**Supported frameworks:** vitest, jest, pytest, cargo test, go test, mocha
+
+**Example:**
+```json
+{ "script": "test", "args": ["--reporter=verbose"], "cwd": "~/projects/myapp" }
+```
+
+---
+
+### code.format
+
+Format code with prettier, black, ruff, gofmt, or rustfmt. Auto-detects from config files. `check=true` reports instead of writing. `dryRun=true` previews without approval.
+
+**Input:**
+```json
+{
+  "paths": "string[] (optional) - Files or directories (default: project root)",
+  "cwd": "string (optional) - Working directory",
+  "formatter": "string (default: auto) - prettier | black | ruff | gofmt | rustfmt | auto",
+  "check": "boolean (default: false) - Report only, do not write",
+  "dryRun": "boolean (default: false) - Preview only",
+  "maxBytes": "number (default: 262144) - Output byte cap"
+}
+```
+
+**Output:**
+```json
+{
+  "formatter": "string",
+  "formatted": "string[] - Files that were formatted",
+  "unchanged": "string[] - Files already formatted",
+  "errors": [{ "path": "string", "message": "string" }]
+}
+```
+
+**Error code:** `UNAVAILABLE` if formatter binary not found
+
+---
+
+### code.lint
+
+Lint code with eslint, ruff, golangci-lint, or clippy. Auto-detects from config files. `fix=true` applies fixes (requires approval). Prefers JSON output format.
+
+**Input:**
+```json
+{
+  "paths": "string[] (optional) - Files or directories (default: project root)",
+  "cwd": "string (optional) - Working directory",
+  "linter": "string (default: auto) - eslint | ruff | golangci-lint | clippy | auto",
+  "fix": "boolean (default: false) - Apply fixes (requires approval)",
+  "dryRun": "boolean (default: false) - Preview only",
+  "maxBytes": "number (default: 262144) - Output byte cap"
+}
+```
+
+**Output:**
+```json
+{
+  "linter": "string",
+  "diagnostics": [
+    {
+      "file": "string",
+      "line": "number",
+      "column": "number",
+      "endLine": "number?",
+      "endColumn": "number?",
+      "severity": "\"error\" | \"warning\" | \"info\"",
+      "rule": "string?",
+      "message": "string",
+      "fixable": "boolean"
+    }
+  ],
+  "counts": { "error": "number", "warning": "number", "info": "number" },
+  "fixed": "string[]? - Files that were fixed (if fix=true)"
+}
+```
+
+**Error code:** `UNAVAILABLE` if linter binary not found
 
 ---
 

@@ -13,3 +13,4 @@ ngrok.zip
 examples/expose-ngrok/ngrok
 build-bin/
 dist-bin/
+session*
