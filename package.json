@@ -1,6 +1,6 @@
 {
   "name": "local-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Secure local terminal bridge for cloud-based AI via MCP",
   "repository": {
     "type": "git",
