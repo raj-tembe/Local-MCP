@@ -47,6 +47,48 @@ All Phase 2 tools are in `security.requireApproval` by default. Use `dryRun: tru
 
 ---
 
+## Phase 3 — Session & Integration Tools (denied by default, approval required)
+
+All Phase 3 tools are in `toolFilter.deniedTools` by default and require explicit opt-in. Each requires approval on first use per session.
+
+### REPL (stateful)
+- `repl.start` – Start REPL session (python, node, ruby). Returns sessionId.
+- `repl.eval` – Evaluate code in session. Sentinel-based output. Returns output/result/error.
+- `repl.list` – List active sessions with idle time.
+- `repl.close` – Close session.
+- Max 4 sessions, 15min idle timeout.
+
+### HTTP
+- `http.request` – HTTP requests with SSRF guard. Blocks metadata IPs (169.254.0.0/16) and private networks by default. Enable `http.allowPrivateNetworks` for localhost. Max 5 redirects.
+
+### Docker
+- `docker.ps` – List containers (all:boolean).
+- `docker.logs` – Container logs (tail, since, timestamps).
+- `docker.compose` – up/down/ps/logs/build/restart.
+- `docker.exec` – Execute command in container (effectively remote shell, denied by default).
+
+### Package Inspection
+- `package.list` – List installed packages (auto-detects manager).
+- `package.outdated` – Check outdated packages.
+- `package.audit` – Vulnerability audit (queries registry).
+
+### File Watching
+- `fs.watch` – Watch directory (events: add/change/unlink, debounce). Max 8 watchers, 1000 events each.
+- `fs.watch.poll` – Poll for changes with cursor.
+- `fs.unwatch` – Stop watcher.
+
+### Logs
+- `log.tail` – Cursor-based incremental log reads.
+
+### LSP
+- `lsp.diagnostics` – Language server diagnostics (typescript, python, rust, go, etc.). One server per language per project root, 5min idle timeout.
+
+### Database
+- `db.tables` – List tables from pre-configured connection.
+- `db.query` – Execute SQL. Connections in config (no DSN from caller). `readOnly=true` enforced at driver level (PRAGMA query_only, SET TRANSACTION READ ONLY).
+
+---
+
 ## Existing Tools
 
 ### Terminal

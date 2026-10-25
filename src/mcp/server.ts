@@ -30,6 +30,14 @@ import { runFSEdit, runFSApplyPatch, runFSDiff, runFSMove, runFSCopy, runFSRemov
 import { runGitAdd, runGitCommit, runGitStash, runGitCheckout, runGitBranch } from '../tools/git-write.js';
 import { runTaskRun } from '../tools/task.js';
 import { runCodeFormat, runCodeLint } from '../tools/code-quality.js';
+import { runReplStart, runReplEval, runReplList, runReplClose } from '../tools/repl.js';
+import { runHttpRequest } from '../tools/http.js';
+import { runDockerPs, runDockerLogs, runDockerCompose, runDockerExec } from '../tools/docker.js';
+import { runPackageList, runPackageOutdated, runPackageAudit } from '../tools/package-inspect.js';
+import { runFsWatch, runFsWatchPoll, runFsUnwatch } from '../tools/fs-watch.js';
+import { runLogTail } from '../tools/log.js';
+import { runLspDiagnostics } from '../tools/lsp.js';
+import { runDbTables, runDbQuery } from '../tools/db.js';
 
 const execAsync = promisify(exec);
 
@@ -1130,6 +1138,355 @@ export function createLocalMcpServer(config: AppConfig = defaultConfig): McpServ
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message === 'Permission denied') return denyResult(message, { tool: 'code.lint' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 3: Session and integration tools (highest security weight)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool('repl.start', {
+    description: 'Start a stateful REPL session (python, node, ruby). Returns sessionId for use with repl.eval.',
+    inputSchema: {
+      language: z.enum(['python', 'node', 'ruby']).describe('REPL language'),
+      cwd: z.string().optional().describe('Working directory'),
+      env: z.record(z.string()).optional().describe('Additional environment variables')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runReplStart(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'repl.start' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('repl.eval', {
+    description: 'Evaluate code in an existing REPL session. Returns output, result, or error with traceback.',
+    inputSchema: {
+      sessionId: z.string().describe('Session ID from repl.start'),
+      code: z.string().describe('Code to evaluate'),
+      timeoutMs: z.number().int().positive().max(300000).default(30000).describe('Timeout in ms (default 30s, max 300s)')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runReplEval(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'repl.eval' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('repl.list', {
+    description: 'List active REPL sessions with idle time and start time.',
+    inputSchema: {}
+  }, async (args, extra) => {
+    try {
+      const result = await runReplList(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'repl.list' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('repl.close', {
+    description: 'Close a REPL session.',
+    inputSchema: {
+      sessionId: z.string().describe('Session ID to close')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runReplClose(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'repl.close' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('http.request', {
+    description: 'Make an HTTP request. SSRF guard blocks metadata IPs and private networks by default (enable http.allowPrivateNetworks to allow).',
+    inputSchema: {
+      url: z.string().describe('URL to request'),
+      method: z.string().default('GET').describe('HTTP method'),
+      headers: z.record(z.string()).optional().describe('Request headers'),
+      body: z.string().optional().describe('Request body'),
+      bodyEncoding: z.enum(['utf8', 'base64']).default('utf8').describe('Body encoding'),
+      timeoutMs: z.number().int().positive().max(120000).default(30000).describe('Timeout in ms (default 30s, max 120s)'),
+      followRedirects: z.boolean().default(false).describe('Follow redirects (max 5)'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runHttpRequest(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'http.request' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('docker.ps', {
+    description: 'List Docker containers.',
+    inputSchema: {
+      all: z.boolean().default(false).describe('Show all containers (not just running)')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runDockerPs(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'docker.ps' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('docker.logs', {
+    description: 'Get logs from a Docker container.',
+    inputSchema: {
+      container: z.string().describe('Container name or ID'),
+      tail: z.number().int().positive().max(5000).default(100).describe('Number of lines from end'),
+      since: z.string().optional().describe('Show logs since timestamp (RFC3339)'),
+      timestamps: z.boolean().default(false).describe('Include timestamps'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runDockerLogs(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'docker.logs' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('docker.compose', {
+    description: 'Run docker compose commands (up, down, ps, logs, build, restart).',
+    inputSchema: {
+      action: z.enum(['up', 'down', 'ps', 'logs', 'build', 'restart']).describe('Compose action'),
+      cwd: z.string().optional().describe('Project directory'),
+      files: z.array(z.string()).optional().describe('Compose files'),
+      services: z.array(z.string()).optional().describe('Service names'),
+      detach: z.boolean().default(true).describe('Run in background (for up)')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runDockerCompose(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'docker.compose' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('docker.exec', {
+    description: 'Execute a command in a running Docker container. Effectively remote shell access - requires approval.',
+    inputSchema: {
+      container: z.string().describe('Container name or ID'),
+      command: z.array(z.string()).describe('Command and arguments as array'),
+      user: z.string().optional().describe('User to run as'),
+      cwd: z.string().optional().describe('Working directory inside container'),
+      timeoutMs: z.number().int().positive().max(300000).default(30000).describe('Timeout in ms')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runDockerExec(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'docker.exec' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('package.list', {
+    description: 'List installed packages from package manager (npm, pnpm, yarn, bun, pip, uv, cargo, go).',
+    inputSchema: {
+      manager: z.enum(['npm', 'pnpm', 'yarn', 'bun', 'pip', 'uv', 'cargo', 'go']).optional().describe('Package manager (auto-detected if omitted)'),
+      cwd: z.string().optional().describe('Project directory'),
+      depth: z.number().int().positive().default(0).describe('Dependency tree depth (0 = top-level only)')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runPackageList(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'package.list' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('package.outdated', {
+    description: 'Check for outdated packages.',
+    inputSchema: {
+      manager: z.enum(['npm', 'pnpm', 'yarn', 'bun', 'pip', 'uv', 'cargo', 'go']).optional().describe('Package manager (auto-detected if omitted)'),
+      cwd: z.string().optional().describe('Project directory')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runPackageOutdated(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'package.outdated' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('package.audit', {
+    description: 'Audit packages for vulnerabilities. Note: queries the package registry.',
+    inputSchema: {
+      manager: z.enum(['npm', 'pnpm', 'yarn', 'bun', 'pip', 'uv', 'cargo', 'go']).optional().describe('Package manager (auto-detected if omitted)'),
+      cwd: z.string().optional().describe('Project directory'),
+      level: z.enum(['low', 'moderate', 'high', 'critical']).default('low').describe('Minimum severity to report')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runPackageAudit(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'package.audit' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.watch', {
+    description: 'Start watching a directory for file changes. Returns watchId for polling.',
+    inputSchema: {
+      path: z.string().describe('Directory to watch'),
+      events: z.array(z.enum(['add', 'change', 'unlink'])).optional().describe('Event types to watch'),
+      debounceMs: z.number().int().positive().default(250).describe('Debounce milliseconds'),
+      sessionId: z.string().optional().describe('Optional session ID')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFsWatch(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.watch' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.watch.poll', {
+    description: 'Poll for changes from a watcher.',
+    inputSchema: {
+      watchId: z.string().describe('Watch ID from fs.watch'),
+      since: z.number().optional().describe('Cursor timestamp')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFsWatchPoll(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.watch.poll' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('fs.unwatch', {
+    description: 'Stop a file watcher.',
+    inputSchema: {
+      watchId: z.string().describe('Watch ID to stop')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runFsUnwatch(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'fs.unwatch' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('log.tail', {
+    description: 'Read log file incrementally with cursor-based pagination.',
+    inputSchema: {
+      path: z.string().describe('Log file path'),
+      lines: z.number().int().positive().max(5000).default(100).describe('Number of lines to return'),
+      cursor: z.number().int().nonnegative().optional().describe('Byte offset cursor for incremental reads'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runLogTail(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'log.tail' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('lsp.diagnostics', {
+    description: 'Get LSP diagnostics for a file. Starts language server if needed.',
+    inputSchema: {
+      path: z.string().describe('File path'),
+      server: z.string().optional().describe('Language server (auto-detected from file extension)'),
+      timeoutMs: z.number().int().positive().default(20000).describe('Timeout in ms'),
+      maxBytes: z.number().int().positive().default(262144).describe('Output byte cap')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runLspDiagnostics(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'lsp.diagnostics' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('db.tables', {
+    description: 'List tables in a configured database connection.',
+    inputSchema: {
+      connection: z.string().describe('Connection name from config')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runDbTables(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'db.tables' });
+      return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
+    }
+  });
+
+  server.registerTool('db.query', {
+    description: 'Execute a SQL query on a configured database connection. Connections are pre-declared in config (no DSN from caller). readOnly=true enforced at driver level.',
+    inputSchema: {
+      connection: z.string().describe('Connection name from config'),
+      sql: z.string().describe('SQL query'),
+      params: z.array(z.unknown()).optional().describe('Query parameters'),
+      maxRows: z.number().int().positive().max(5000).default(500).describe('Max rows to return'),
+      timeoutMs: z.number().int().positive().max(60000).default(15000).describe('Timeout in ms'),
+      readOnly: z.boolean().default(true).describe('Enforce read-only at driver level')
+    }
+  }, async (args, extra) => {
+    try {
+      const result = await runDbQuery(args, security, audit, extra.sessionId ?? createSessionId());
+      return { content: [textContent(JSON.stringify(result, null, 2))], structuredContent: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'Permission denied') return denyResult(message, { tool: 'db.query' });
       return { content: [textContent(message)], isError: true, structuredContent: { error: message } };
     }
   });

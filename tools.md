@@ -890,11 +890,320 @@ Lint code with eslint, ruff, golangci-lint, or clippy. Auto-detects from config 
 
 ## Phase 3 — Session and Integration Tools (Highest Security)
 
-These tools spawn long-lived processes, make network calls, or touch databases. They are **denied by default** and require explicit opt-in.
-
-*Coming in Phase 3: `repl.start`, `repl.eval`, `repl.list`, `repl.close`, `http.request`, `docker.ps`, `docker.logs`, `docker.compose`, `docker.exec`, `package.list`, `package.outdated`, `package.audit`, `fs.watch`, `fs.watch.poll`, `fs.unwatch`, `log.tail`, `lsp.diagnostics`, `db.tables`, `db.query`*
+These tools spawn long-lived processes, make network calls, or touch databases. They are **denied by default** (in `toolFilter.deniedTools`) and require explicit opt-in. Each requires approval on first use per session, with payload-hash scoping.
 
 ---
+
+### repl.start / repl.eval / repl.list / repl.close
+
+Stateful REPL sessions for python, node, or ruby.
+
+**repl.start Input:**
+```json
+{
+  "language": "string (required) - python | node | ruby",
+  "cwd": "string (optional) - Working directory",
+  "env": "Record<string,string> (optional) - Additional environment variables"
+}
+```
+
+**repl.start Output:**
+```json
+{
+  "sessionId": "string",
+  "language": "string",
+  "pid": "number",
+  "banner": "string?"
+}
+```
+
+**repl.eval Input:**
+```json
+{
+  "sessionId": "string (required)",
+  "code": "string (required)",
+  "timeoutMs": "number (default: 30000, max: 300000)"
+}
+```
+
+**repl.eval Output:**
+```json
+{
+  "output": "string",
+  "result": "unknown?",
+  "error": "{ type, message, traceback? }?",
+  "durationMs": "number",
+  "truncated": "boolean"
+}
+```
+
+**repl.list Output:**
+```json
+{
+  "sessions": [{ "sessionId", "language", "pid", "idleMs", "startedAt" }]
+}
+```
+
+**repl.close Input:**
+```json
+{ "sessionId": "string" }
+```
+
+**Notes:** Max 4 concurrent sessions, 15-minute idle timeout. Sentinel-based output delimiting.
+
+---
+
+### http.request
+
+Make HTTP requests with SSRF protection.
+
+**Input:**
+```json
+{
+  "url": "string (required)",
+  "method": "string (default: GET)",
+  "headers": "Record<string,string> (optional)",
+  "body": "string (optional)",
+  "bodyEncoding": "string (default: utf8) - utf8 | base64",
+  "timeoutMs": "number (default: 30000, max: 120000)",
+  "followRedirects": "boolean (default: false, max 5)",
+  "maxBytes": "number (default: 262144)"
+}
+```
+
+**Output:**
+```json
+{
+  "status": "number",
+  "statusText": "string",
+  "headers": "Record<string,string>",
+  "body": "string",
+  "bodyEncoding": "utf8",
+  "truncated": "boolean",
+  "durationMs": "number",
+  "redirects": "string[]"
+}
+```
+
+**Security:** SSRF guard blocks metadata IPs (169.254.0.0/16), private networks. Enable `http.allowPrivateNetworks: true` for localhost access.
+
+---
+
+### docker.ps / docker.logs / docker.compose / docker.exec
+
+**docker.ps Input:**
+```json
+{ "all": "boolean (default: false)" }
+```
+
+**docker.logs Input:**
+```json
+{
+  "container": "string (required)",
+  "tail": "number (default: 100, max: 5000)",
+  "since": "string (optional, RFC3339)",
+  "timestamps": "boolean (default: false)",
+  "maxBytes": "number (default: 262144)"
+}
+```
+
+**docker.compose Input:**
+```json
+{
+  "action": "string (up|down|ps|logs|build|restart)",
+  "cwd": "string (optional)",
+  "files": "string[] (optional)",
+  "services": "string[] (optional)",
+  "detach": "boolean (default: true)"
+}
+```
+
+**docker.exec Input:**
+```json
+{
+  "container": "string (required)",
+  "command": "string[] (required)",
+  "user": "string (optional)",
+  "cwd": "string (optional)",
+  "timeoutMs": "number (default: 30000, max: 300000)"
+}
+```
+
+**Note:** `docker.exec` is effectively remote shell access - denied by default.
+
+---
+
+### package.list / package.outdated / package.audit
+
+**package.list Input:**
+```json
+{
+  "manager": "string (optional) - npm|pnpm|yarn|bun|pip|uv|cargo|go (auto-detected)",
+  "cwd": "string (optional)",
+  "depth": "number (default: 0)"
+}
+```
+
+**package.outdated Input:**
+```json
+{
+  "manager": "string (optional)",
+  "cwd": "string (optional)"
+}
+```
+
+**package.audit Input:**
+```json
+{
+  "manager": "string (optional)",
+  "cwd": "string (optional)",
+  "level": "string (default: low) - low|moderate|high|critical"
+}
+```
+
+**Note:** `package.audit` queries the package registry.
+
+---
+
+### fs.watch / fs.watch.poll / fs.unwatch
+
+**fs.watch Input:**
+```json
+{
+  "path": "string (required)",
+  "events": "string[] (optional) - add|change|unlink",
+  "debounceMs": "number (default: 250)",
+  "sessionId": "string (optional)"
+}
+```
+
+**Output:** `{ "watchId": "string", "path": "string" }`
+
+**fs.watch.poll Input:**
+```json
+{ "watchId": "string", "since": "number (optional)" }
+```
+
+**Output:**
+```json
+{
+  "changes": [{ "type": "add|change|unlink", "path": "string", "at": "number" }],
+  "cursor": "number"
+}
+```
+
+**fs.unwatch Input:**
+```json
+{ "watchId": "string" }
+```
+
+**Limits:** Max 8 watchers, 1000 events per watcher.
+
+---
+
+### log.tail
+
+Cursor-based incremental log reads.
+
+**Input:**
+```json
+{
+  "path": "string (required)",
+  "lines": "number (default: 100, max: 5000)",
+  "cursor": "number (optional) - Byte offset",
+  "maxBytes": "number (default: 262144)"
+}
+```
+
+**Output:**
+```json
+{ "lines": "string[]", "cursor": "number", "truncated": "boolean" }
+```
+
+---
+
+### lsp.diagnostics
+
+Get LSP diagnostics for a file. Starts language server if needed (one per language per project root, 5min idle timeout).
+
+**Input:**
+```json
+{
+  "path": "string (required)",
+  "server": "string (optional) - Auto-detected from extension",
+  "timeoutMs": "number (default: 20000)",
+  "maxBytes": "number (default: 262144)"
+}
+```
+
+**Output:**
+```json
+{
+  "server": "string",
+  "diagnostics": [{
+    "file": "string",
+    "line": "number",
+    "column": "number",
+    "endLine": "number",
+    "endColumn": "number",
+    "severity": "number",
+    "code": "string|number?",
+    "source": "string",
+    "message": "string"
+  }],
+  "truncated": "boolean"
+}
+```
+
+---
+
+### db.tables / db.query
+
+Database access. Connections pre-declared in config (no DSN from caller). `readOnly=true` enforced at driver level.
+
+**db.tables Input:**
+```json
+{ "connection": "string (required)" }
+```
+
+**db.query Input:**
+```json
+{
+  "connection": "string (required)",
+  "sql": "string (required)",
+  "params": "unknown[] (optional)",
+  "maxRows": "number (default: 500, max: 5000)",
+  "timeoutMs": "number (default: 15000, max: 60000)",
+  "readOnly": "boolean (default: true)"
+}
+```
+
+**db.query Output:**
+```json
+{
+  "columns": "string[]",
+  "rows": "unknown[][]",
+  "rowCount": "number",
+  "truncated": "boolean",
+  "durationMs": "number"
+}
+```
+
+**Config example:**
+```json
+{
+  "db": {
+    "connections": {
+      "local-sqlite": { "driver": "sqlite", "file": "./dev.db" },
+      "staging": { "driver": "postgres", "env": "STAGING_DATABASE_URL", "readOnly": true }
+    }
+  }
+}
+```
+
+---
+
+## Existing Tools
 
 ## Existing Tools
 

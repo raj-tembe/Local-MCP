@@ -256,6 +256,25 @@ All Phase 2 tools: in `security.requireApproval` by default, support `dryRun` (n
 
 ---
 
+## Phase 3 — Session and Integration Tools (Highest Security)
+
+These tools spawn long-lived processes, make network calls, or touch databases. They are **denied by default** (in `toolFilter.deniedTools`) and require explicit opt-in. Each requires approval on first use per session.
+
+| Tool | Description |
+|------|-------------|
+| `repl.start` / `repl.eval` / `repl.list` / `repl.close` | Stateful REPL sessions (python, node, ruby). Sentinel-based output delimiting. Max 4 sessions, 15min idle timeout. |
+| `http.request` | HTTP requests with SSRF guard. Blocks metadata IPs (169.254.0.0/16) and private networks by default. Enable `http.allowPrivateNetworks` for localhost. |
+| `docker.ps` / `docker.logs` / `docker.compose` / `docker.exec` | Docker container management. `docker.exec` is effectively remote shell - denied by default. |
+| `package.list` / `package.outdated` / `package.audit` | Package inspection. `audit` queries registry. |
+| `fs.watch` / `fs.watch.poll` / `fs.unwatch` | File watching with debouncing. Max 8 watchers, 1000 events each. |
+| `log.tail` | Cursor-based incremental log reads. |
+| `lsp.diagnostics` | Language server diagnostics (typescript, python, rust, go, etc.). One server per language per project, 5min idle timeout. |
+| `db.tables` / `db.query` | Database access. Connections pre-declared in config (no DSN from caller). `readOnly=true` enforced at driver level. |
+
+All Phase 3 tools: in `security.requireApproval` by default, in `toolFilter.deniedTools` by default, `maxBytes` cap (256 KB default), return structured JSON with `truncated` flag.
+
+---
+
 ## Add custom connector (Legacy)
 
 Add custom connectors (Claude)
@@ -408,6 +427,9 @@ Tool| Purpose
 "fs.move"| Move/rename file or directory
 "fs.copy"| Copy file or directory
 "fs.remove"| Remove file/directory (trash by default)
+"fs.watch"| Watch directory for changes
+"fs.watch.poll"| Poll for file changes
+"fs.unwatch"| Stop file watcher
 "search.grep"| Regex content search across files
 "git.status"| Git repository status
 "git.diff"| Git diff (working tree, staged, or refs)
@@ -425,10 +447,26 @@ Tool| Purpose
 "task.run"| Run package.json/Makefile/justfile script
 "code.format"| Format code (prettier, black, ruff, gofmt, rustfmt)
 "code.lint"| Lint code (eslint, ruff, golangci-lint, clippy)
-"process.list"| List background processes started with process.start
-"process.logs"| Read background process output
-"process.stop"| Stop a background process
-"user.input"| Request input from the user
+"repl.start"| Start REPL session (python/node/ruby)
+"repl.eval"| Evaluate code in REPL
+"repl.list"| List REPL sessions
+"repl.close"| Close REPL session
+"http.request"| Make HTTP request (SSRF guard)
+"docker.ps"| List Docker containers
+"docker.logs"| Get container logs
+"docker.compose"| Docker Compose commands
+"docker.exec"| Execute in container
+"package.list"| List installed packages
+"package.outdated"| Check outdated packages
+"package.audit"| Audit vulnerabilities
+"log.tail"| Tail log file with cursor
+"lsp.diagnostics"| LSP diagnostics for file
+"db.tables"| List database tables
+"db.query"| Execute SQL query
+"process.list"| List background processes
+"process.logs"| Read process output
+"process.stop"| Stop background process
+"user.input"| Request input from user
 "user.confirm"| Request confirmation
 "user.notify"| Send desktop notification
 "user.clipboard.read"| Read system clipboard
@@ -436,10 +474,10 @@ Tool| Purpose
 "user.open_url"| Open URL in browser
 "user.stdout.write"| Write to stdout
 "user.stderr.write"| Write to stderr
-"code.run"| Run a code snippet (python, javascript, typescript, bash, ruby, go)
+"code.run"| Run code snippet (python, javascript, typescript, bash, ruby, go)
 "package.install"| Install dependencies (npm, pnpm, yarn, bun, pip, uv, cargo, go)
-"runtime.detect"| Detect installed runtimes and package managers
-"process.start"| Start a background process
+"runtime.detect"| Detect installed runtimes
+"process.start"| Start background process
 "connectors.list"| List custom MCP connectors
 "connectors.add"| Add custom MCP connector
 "connectors.remove"| Remove custom MCP connector

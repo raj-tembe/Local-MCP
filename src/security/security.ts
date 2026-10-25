@@ -166,6 +166,18 @@ export class SecurityEngine {
     // The deadline covers time spent queued behind other prompts as well as the prompt itself.
     const timeoutMs = this.config.security.approvalTimeoutMs;
     const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined;
+
+    // Check deadline before even entering the queue - if already expired, deny immediately
+    if (deadline !== undefined && Date.now() >= deadline) {
+      process.stderr.write(`[Local-MCP] Approval for ${toolName} timed out; request denied.\n`);
+      return {
+        allowed: false,
+        mode,
+        decision: 'deny' as const,
+        reason: `Approval timed out after ${Math.round(timeoutMs / 1000)}s: nobody answered the prompt in the terminal running Local-MCP. Nothing was run and no decision was saved. Retry while watching that terminal, or adjust security.approvalTimeoutMs / security.defaultMode.`
+      };
+    }
+
     const result = await enqueueApproval(async () => {
       const remaining = deadline === undefined ? undefined : deadline - Date.now();
       if (remaining !== undefined && remaining <= 0) return { status: 'timeout' as const };
